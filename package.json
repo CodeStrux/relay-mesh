@@ -1,0 +1,34 @@
+{
+  "name": "relay-mesh",
+  "version": "0.1.0",
+  "description": "Parallel agent workstream orchestrator over open-weight models — expertise profiles, filesystem relays, human approval gates.",
+  "type": "module",
+  "license": "MIT",
+  "repository": "github:CodeStrux/relay-mesh",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "relay-mesh": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "prompts",
+    "profiles.json",
+    "docs/protocol.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "openai": "^6.45.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "profiles": [
+    { "name": "planner",        "role": "planner",  "domain": "orchestration & synthesis",      "modelEnv": "PLANNER_MODEL",    "effort": "xhigh",  "prompt": "prompts/planner.md" },
+    { "name": "recon-backend",  "role": "recon",    "domain": "backend + infra recon",          "area": "backend",  "modelEnv": "RECON_CODE_MODEL", "effort": "high",   "prompt": "prompts/recon-backend.md" },
+    { "name": "recon-frontend", "role": "recon",    "domain": "frontend + UI experience recon", "area": "frontend", "modelEnv": "RECON_CODE_MODEL", "effort": "high",   "prompt": "prompts/recon-frontend.md" },
+    { "name": "recon-business", "role": "recon",    "domain": "business model mapping",         "area": "business", "modelEnv": "PLANNER_MODEL",    "effort": "high",   "prompt": "prompts/recon-business.md" },
+    { "name": "recon-vision",   "role": "recon",    "domain": "diagrams, boards, screenshots, video", "area": "vision", "modelEnv": "VISION_MODEL", "effort": "medium", "prompt": "prompts/recon-vision.md", "multimodal": true },
+    { "name": "exec-backend",   "role": "executor", "domain": "backend",  "area": "backend",  "modelEnv": "BACKEND_MODEL",  "effort": "xhigh",  "prompt": "prompts/executor-backend.md" },
+    { "name": "exec-frontend",  "role": "executor", "domain": "frontend", "area": "frontend", "modelEnv": "FRONTEND_MODEL", "effort": "medium", "prompt": "prompts/executor-frontend.md" },
+    { "name": "exec-infra",     "role": "executor", "domain": "infra",    "area": "infra",    "modelEnv": "INFRA_MODEL",    "effort": "high",   "prompt": "prompts/executor-infra.md" },
+    { "name": "monitor",        "role": "monitor",  "domain": "relay observation & roll-up",    "modelEnv": "MONITOR_MODEL",  "effort": "low",    "prompt": "prompts/monitor.md" },
+    { "name": "verifier",       "role": "verifier", "domain": "goal-vs-outcome verification",   "modelEnv": "PLANNER_MODEL",  "effort": "xhigh",  "prompt": "prompts/verifier.md" }
+  ]
+}

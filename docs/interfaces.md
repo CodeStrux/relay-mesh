@@ -1,0 +1,185 @@
+# Internal interface seams (implementation contract)
+
+Wave implementers: export EXACTLY these signatures so the layers compose without rework.
+TypeScript, ESM, NodeNext — **relative imports must use the `.js` suffix** (`from "./report.js"`).
+Runtime deps are `openai` and `zod` (v4) only. Node builtins: `node:util` `parseArgs`,
+`process.loadEnvFile`, `node:crypto` `createHash`, `node:fs/promises`.
+
+## src/relay/report.ts
+
+```ts
+export type Status = "complete" | "partial" | "blocked";
+export interface StatusBlock {
+  area: string; status: Status; steps_done: number; steps_total: number; plan_ref: string;
+}
+/** null status ⇒ report is in-flight / not authoritative. body = everything after the block. */
+export function parseReport(md: string): { status: StatusBlock | null; body: string };
+export function serializeStatusBlock(s: StatusBlock): string; // "---\narea: …\n---\n"
+```
+
+## src/relay/closure.ts
+
+```ts
+import type { Status } from "./report.js";
+export interface ClosureBrief { area: string; status: Status; steps_done: number; steps_total: number; pct: number; }
+export interface Closure {
+  pair: string; generated: string; briefs: ClosureBrief[];
+  totals: { pct: number; blocked: string[] };
+}
+export function computeClosure(pair: string, reports: { area: string; md: string }[], generated: string): Closure;
+export function rollupPair(pairDir: string, now?: Date): Promise<Closure>; // reads *.report.md, writes closure.json atomically
+```
+
+## src/relay/fsio.ts
+
+```ts
+export function atomicWrite(filePath: string, content: string): Promise<void>; // .part + rename, mkdir -p
+export function safeRead(filePath: string): Promise<string | null>;            // null if missing
+export function listVisible(dir: string): Promise<string[]>;                   // skips *.part and dotfiles; [] if missing
+export function appendLine(filePath: string, line: string): Promise<void>;     // ndjson append (single host writer)
+```
+
+## src/relay/paths.ts
+
+```ts
+export interface MeshPaths { /* every path in docs/protocol.md as a method */ }
+export function meshPaths(root: string): {
+  root: string; meshJson: string; goal: string; inputsDir: string; usage: string; roundsDir: string;
+  round(r: string): {
+    dir: string; plan: string; approval: string;
+    reconPair(profileName: string): string;         // rounds/rX/recon/planner__<profileName>
+    execPair(area: string): string;                 // rounds/rX/exec/planner__<area>
+    brief(pairDir: string, area: string): string; report(pairDir: string, area: string): string;
+    closure(pairDir: string): string;
+    workspace(area: string): string; workspaceFiles(area: string): string; raw(area: string): string;
+    eventsNdjson: string; rollup: string; verdictJson: string; verdictMd: string; transcriptsDir: string;
+  };
+};
+export function nextRound(existing: string[]): string; // ["r001"] -> "r002"; [] -> "r001"
+```
+
+## src/relay/state.ts
+
+```ts
+export type Phase = "idle" | "recon" | "synthesis" | "awaiting-approval" | "replanning"
+  | "executing" | "rollup" | "verifying" | "fix-planning" | "done";
+export interface PairState { pair: string; area: string; hasBrief: boolean; hasReport: boolean; status: import("./report.js").Status | null; }
+export interface RunState {
+  root: string; round: string | null; phase: Phase;
+  recon: PairState[]; exec: PairState[];
+  approval: { decision: "approved" | "rejected"; planSha256: string } | null;
+  planSha256: string | null;   // current hash of plan.md, null if absent
+  verdict: { satisfied: boolean } | null;
+}
+export function deriveState(root: string): Promise<RunState>; // pure fn of the filesystem, per docs/protocol.md
+```
+
+## src/relay/artifacts.ts
+
+```ts
+export interface ExtractResult {
+  files: { relpath: string; bytes: number }[];
+  reportMd: string | null;      // the REPORT section incl. status block, or null if unparseable
+  problems: string[];           // human-readable parse problems (traversal rejects, unterminated blocks…)
+}
+export function extractArtifacts(output: string): ExtractResult;                    // pure parse
+export function writeArtifacts(res: ExtractResult, areaWorkspaceDir: string, output: string): Promise<void>;
+// writes files under <ws>/files/ (paths validated), raw.md when reportMd === null
+```
+
+## src/openrouter.ts
+
+```ts
+export type Effort = "low" | "medium" | "high" | "xhigh";
+export type LlmContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }      // data: URLs for local files
+  | { type: "video_url"; video_url: { url: string } };
+export interface LlmCallOpts {
+  model: string; effort: Effort; system: string;
+  user: LlmContentPart[];
+  maxOutputTokens?: number; timeoutMs: number;
+  onChunk?: (text: string) => void;                        // streaming hook
+}
+export interface LlmResult { text: string; usage: { in: number; out: number }; }
+export interface LlmClient { complete(opts: LlmCallOpts): Promise<LlmResult>; listModels(): Promise<string[]>; }
+export function makeOpenRouterClient(cfg: { apiKey: string; baseUrl: string; referer: string; title: string }): LlmClient;
+// effort mapping: low|medium|high -> reasoning:{effort}; xhigh -> reasoning:{effort:"high"};
+// on HTTP 400 mentioning "reasoning", retry once with the param stripped + one-line warning.
+// Retry once ONLY if failure precedes the first streamed chunk. Never retry on abort.
+```
+
+## src/config.ts
+
+```ts
+export interface Config {
+  apiKey: string; baseUrl: string; referer: string; title: string;
+  relayRoot: string; profilesPath: string;
+  monitorPollMs: number; maxFixRounds: number; debug: boolean;
+  modelFor(envName: string): string;   // env value ?? DEFAULTS[envName] ?? throw MissingEnvError (friendly table)
+}
+export function loadConfig(opts?: { requireApiKey?: boolean }): Config; // process.loadEnvFile(".env") if present — never throw if .env missing
+export const MODEL_DEFAULTS: Record<string, string>; // the † defaults from .env.example
+```
+
+## src/profiles.ts
+
+```ts
+export type Role = "planner" | "recon" | "executor" | "monitor" | "verifier";
+export interface Profile {
+  name: string; role: Role; domain: string; area?: string;
+  modelEnv: string; effort: import("./openrouter.js").Effort;
+  prompt: string; multimodal: boolean; maxOutputTokens?: number;
+}
+export function loadProfiles(path: string): Promise<Profile[]>; // zod-validated; unique names; exactly 1 planner/monitor/verifier; unique executor areas
+export function byRole(profiles: Profile[], role: Role): Profile[];
+```
+
+## src/prompts.ts
+
+```ts
+/** Loads a profile prompt file; expands "{{> _partial.md}}" includes (one level) from prompts/;
+ *  interpolates {{GOAL}}, {{REPORT_PATH}}, {{AREA}}, {{ROUND}} style vars. Concatenation only. */
+export function composePrompt(promptPath: string, vars: Record<string, string>): Promise<string>;
+```
+
+## src/usage.ts
+
+```ts
+export interface UsageLine { ts: string; round: string; profile: string; model: string; in: number; out: number; }
+export function recordUsage(usagePath: string, line: UsageLine): Promise<void>;
+export function aggregate(lines: UsageLine[], by: "profile" | "round" | "model"): { key: string; in: number; out: number; calls: number }[];
+export function readUsage(usagePath: string): Promise<UsageLine[]>;
+```
+
+## src/context.ts
+
+```ts
+/** Read-only project bundle for recon: git-aware file tree + key file contents, size-capped. */
+export function bundleProject(projectPath: string, capBytes?: number): Promise<string>; // default cap ~30_000
+```
+
+## src/agents/call.ts
+
+```ts
+import type { LlmClient } from "../openrouter.js";
+import type { Profile } from "../profiles.js";
+export interface CallCtx { client: LlmClient; config: import("../config.js").Config; round: string; usagePath: string; transcriptsDir: string; }
+/** One profile call: compose prompt → stream to <outPath>.part (via onChunk) → rename; usage line; transcript. */
+export function callProfile(ctx: CallCtx, profile: Profile, userParts: import("../openrouter.js").LlmContentPart[], outPath: string, vars: Record<string, string>): Promise<string>; // returns final text
+```
+
+## CLI conventions (src/cli.ts + src/commands/*)
+
+- `node:util parseArgs` with a dispatch table; each command module exports
+  `run(argv: string[]): Promise<number>` returning the exit code (0/1/2/3 per protocol).
+- Three-line error style: what broke (literal) / what the tool believes / what to do next.
+  Stack traces only when `RELAY_DEBUG=1`.
+- Commands never hold state between invocations; first act is `deriveState`.
+
+## Testing conventions
+
+- `test/fakes/llm.ts` exports `class FakeLlmClient implements LlmClient` scripted per profile/model
+  with queued responses, failures, timeouts, malformed outputs; zero network anywhere in tests.
+- Fixtures live in `test/fixtures/` as builders (functions that lay a relay root in a tmpdir),
+  not committed trees.
