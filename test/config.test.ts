@@ -10,6 +10,8 @@ const ENV_KEYS = [
   "RELAY_PROFILES",
   "MONITOR_POLL_MS",
   "MAX_FIX_ROUNDS",
+  "RELAY_EXEC_FILE_BYTES",
+  "RELAY_EXEC_BUNDLE_BYTES",
   "RELAY_DEBUG",
   "PLANNER_MODEL",
   "SOME_NEW_MODEL",
@@ -60,6 +62,8 @@ describe("loadConfig", () => {
     expect(cfg.profilesPath.endsWith("profiles.json")).toBe(true);
     expect(cfg.monitorPollMs).toBe(15000);
     expect(cfg.maxFixRounds).toBe(3);
+    expect(cfg.execFileBytes).toBe(65536);
+    expect(cfg.execBundleBytes).toBe(196608);
     expect(cfg.debug).toBe(false);
   });
 
@@ -69,6 +73,8 @@ describe("loadConfig", () => {
     process.env.RELAY_PROFILES = "./custom-profiles.json";
     process.env.MONITOR_POLL_MS = "5000";
     process.env.MAX_FIX_ROUNDS = "7";
+    process.env.RELAY_EXEC_FILE_BYTES = "1024";
+    process.env.RELAY_EXEC_BUNDLE_BYTES = "4096";
     process.env.RELAY_DEBUG = "1";
     const cfg = loadConfig();
     expect(cfg.baseUrl).toBe("https://example.test/v1");
@@ -76,6 +82,8 @@ describe("loadConfig", () => {
     expect(cfg.profilesPath).toBe("./custom-profiles.json");
     expect(cfg.monitorPollMs).toBe(5000);
     expect(cfg.maxFixRounds).toBe(7);
+    expect(cfg.execFileBytes).toBe(1024);
+    expect(cfg.execBundleBytes).toBe(4096);
     expect(cfg.debug).toBe(true);
   });
 
@@ -87,6 +95,11 @@ describe("loadConfig", () => {
   it("rejects a non-numeric MONITOR_POLL_MS", () => {
     process.env.MONITOR_POLL_MS = "soon";
     expect(() => loadConfig()).toThrow(/MONITOR_POLL_MS/);
+  });
+
+  it("rejects a non-numeric RELAY_EXEC_BUNDLE_BYTES", () => {
+    process.env.RELAY_EXEC_BUNDLE_BYTES = "big";
+    expect(() => loadConfig()).toThrow(/RELAY_EXEC_BUNDLE_BYTES/);
   });
 
   it("throws MissingEnvError with a friendly table when the key is required and absent", () => {

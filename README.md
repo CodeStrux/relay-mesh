@@ -74,9 +74,9 @@ Exit codes are uniform across commands: `0` success / terminal-good · `1` error
 | Command | Arguments | Reads | Writes | Notes |
 |---|---|---|---|---|
 | `doctor` | `[--models]` | `.env`, `profiles.json`, `prompts/`, relay root | nothing | Env/key/prompt/root checks; whenever a key is set, model slugs are validated live against OpenRouter `/models` with fuzzy suggestions; `--models` additionally prints the full model list. Run first, always. |
-| `plan` | `"<goal>" [--attach file…] [--project path]` | goal, attachments, project files (read-only) | `goal.md`, `inputs/`, recon pair dirs, `rounds/rNNN/plan.md` | Deterministic recon briefs (no LLM before recon); 4-way parallel recon — the vision profile receives attachments as image/video parts; one planner synthesis call. |
+| `plan` | `"<goal>" [--attach file…] [--project path]` | goal, attachments, project files (read-only) | `goal.md`, `inputs/`, `project.json`, recon pair dirs, `rounds/rNNN/plan.md` | Deterministic recon briefs (no LLM before recon); 4-way parallel recon — the vision profile receives attachments as image/video parts; one planner synthesis call. `--project` is recorded in `project.json` so `execute` can bundle source files later. |
 | `approve` | `[--round rNNN] [--reject "notes"]` | `plan.md` | `plan.approval.json`, exec briefs | Interactive gate; requires typing `approve`. Pins `sha256(plan.md)`. Briefs are extracted deterministically from the approved plan. |
-| `execute` | `[--area a…]` | approval, briefs, plan hash | `<area>.report.md`, `workspace/<area>/`, `monitor/events.ndjson`, `monitor/rollup.md`, `closure.json` | Refuses on plan-hash mismatch (exit 1). Parallel executors; deterministic monitor poller; one monitor roll-up LLM call at phase end. Idempotent per pair; `--area` is the multi-machine split seam. |
+| `execute` | `[--area a…] [--project path]` | approval, briefs, plan hash, project files (read-only, via `project.json` or `--project`) | `<area>.report.md`, `workspace/<area>/`, `monitor/events.ndjson`, `monitor/rollup.md`, `closure.json` | Refuses on plan-hash mismatch (exit 1). Parallel executors receive the FULL current contents of project files their brief references (caps: `RELAY_EXEC_FILE_BYTES` / `RELAY_EXEC_BUNDLE_BYTES`); deterministic monitor poller; one monitor roll-up LLM call at phase end. Idempotent per pair; `--area` is the multi-machine split seam. |
 | `verify` | `[--round rNNN]` | goal, plan, reports, rollup | `verify/verdict.json`, `verify/verdict.md`; next round's fix plan if unsatisfied | Strict-JSON verdict with one repair re-prompt. Unsatisfied and below `MAX_FIX_ROUNDS` → scaffolds the next round → back to the gate. |
 | `run` | `"<goal>" [--attach file…] [--project path]` | everything above | everything above | Chains all phases with gates. A bare re-run resumes from the on-disk state. |
 | `status` | `[--json]` | relay root | nothing | Derived phase + per-pair table. Exit code mirrors the phase (2 awaiting human, 3 blocked). |
@@ -181,8 +181,9 @@ A relay root can be shared across machines (syncthing, NFS) because the protocol
 | `closure.json` | the roll-up step |
 | `monitor/events.ndjson` | the monitoring host |
 | `plan.approval.json` | the approving human's CLI |
+| `project.json` | the `plan` command |
 
-Every write goes to `<name>.part` in the same directory, then an atomic rename — a visible file is always complete, and readers ignore `*.part` and dot-prefixed entries. To split execution across machines, run `execute --area backend` on one host and `execute --area frontend --area infra` on another; each pair has exactly one writer, so the split is safe by construction.
+Every write goes to `<name>.part` in the same directory, then an atomic rename — a visible file is always complete, and readers ignore `*.part` and dot-prefixed entries. To split execution across machines, run `execute --area backend` on one host and `execute --area frontend --area infra` on another; each pair has exactly one writer, so the split is safe by construction. The project path recorded in `project.json` is advisory — on a box where it doesn't resolve, pass `execute --project <local-checkout>` (or expect executors to block precisely on the files they cannot see).
 
 ## What executors produce
 
@@ -198,6 +199,7 @@ Malformed executor output gets one corrective re-prompt; if it is still malforme
 
 - **Start with `npx relay-mesh doctor`.** It checks the env, the key, the prompt files, and the relay root, and — whenever a key is set — validates every model slug live with suggestions for near-misses (`--models` also prints the full model list).
 - **`blocked` is not a failure.** Exit code 3 means an agent held work for your clearance. Read the area's report, resolve the blocker, and re-run `execute` — only pairs without a parseable report re-launch.
+- **Blocked reports naming files it "cannot see"?** The executor's prompt ends its source section with a context manifest listing exactly which files were provided, which were omitted (and the byte-cap knob to raise), and which don't exist. Check `rounds/rNNN/.transcripts/`, then raise `RELAY_EXEC_FILE_BYTES` / `RELAY_EXEC_BUNDLE_BYTES` or fix `--project`.
 - **Resume is just re-running.** There is no daemon and no hidden state; every command derives everything from disk. A killed `execute` re-run picks up exactly the pairs that never finished.
 - **Errors are three lines**: what broke, what the tool believes, what to do next. Set `RELAY_DEBUG=1` for stack traces.
 - **"plan edited after approval — re-approve"**: `plan.md` changed since its hash was pinned. Re-read it, run `approve` again.

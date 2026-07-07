@@ -20,7 +20,7 @@ import { parseReport } from "../src/relay/report.js";
 import { deriveState } from "../src/relay/state.js";
 import { readUsage } from "../src/usage.js";
 import { FakeLlmClient } from "./fakes/llm.js";
-import { reportMd, tmpRoot } from "./fixtures/roots.js";
+import { RECON_AREAS, addReconReport, makeRoot, reportMd, tmpRoot } from "./fixtures/roots.js";
 
 // Commands construct the OpenRouter client themselves; swap the factory for the
 // per-test fake so run() can be invoked exactly as cli.ts would invoke it.
@@ -416,6 +416,124 @@ describe("review-confirmed edges", () => {
 
     const { code } = await cliCode(approveCmd, ["--yes"]);
     expect(code).toBe(1); // nothing in a terminal round is rewritten
+  });
+
+  it("plan --project persists project.json and execute inlines the referenced source bytes", async () => {
+    const base = dirs[dirs.length - 1]!;
+    const proj = join(base, "proj");
+    await mkdir(proj, { recursive: true });
+    await writeFile(join(proj, "app.cfg"), "PROJECT_CFG_BODY\n", "utf8");
+
+    scriptRecon();
+    fake.script(
+      "m-planner",
+      "# Plan\n\n## Synthesis\n\nok\n\n## Domain brief: backend\n\n1. Update `app.cfg`.\n\n## Domain brief: frontend\n\n1. Build the UI.\n\n## Domain brief: infra\n\n1. Provision the box.\n",
+    );
+    for (const a of EXEC_AREAS) fake.script(`m-exec-${a}`, wire(a));
+    fake.script("m-monitor", ROLLUP_MD);
+
+    expect(await planCmd([GOAL, "--project", proj])).toBe(0);
+    const record = JSON.parse((await safeRead(join(root, "project.json")))!);
+    expect(record.path).toBe(proj);
+    expect(typeof record.host).toBe("string");
+
+    expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await executeCmd([])).toBe(0);
+    const backendCall = fake.calls.find((c) => c.model === "m-exec-backend")!;
+    expect(callText(backendCall)).toContain("## Source files (current contents)");
+    expect(callText(backendCall)).toContain("PROJECT_CFG_BODY");
+  });
+
+  it("execute --project overrides a stale project.json record", async () => {
+    const base = dirs[dirs.length - 1]!;
+    const projA = join(base, "projA");
+    const projB = join(base, "projB");
+    await mkdir(projA, { recursive: true });
+    await mkdir(projB, { recursive: true });
+    await writeFile(join(projA, "app.cfg"), "A_BODY\n", "utf8");
+    await writeFile(join(projB, "app.cfg"), "B_BODY\n", "utf8");
+
+    scriptRecon();
+    fake.script(
+      "m-planner",
+      "# Plan\n\n## Synthesis\n\nok\n\n## Domain brief: backend\n\n1. Update `app.cfg`.\n\n## Domain brief: frontend\n\n1. Build the UI.\n\n## Domain brief: infra\n\n1. Provision the box.\n",
+    );
+    for (const a of EXEC_AREAS) fake.script(`m-exec-${a}`, wire(a));
+    fake.script("m-monitor", ROLLUP_MD);
+
+    expect(await planCmd([GOAL, "--project", projA])).toBe(0);
+    expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await executeCmd(["--project", projB])).toBe(0);
+
+    const backendCall = fake.calls.find((c) => c.model === "m-exec-backend")!;
+    expect(callText(backendCall)).toContain("B_BODY");
+    expect(callText(backendCall)).not.toContain("A_BODY");
+  });
+
+  it("a recorded project path missing on this box degrades to a visible note, never a crash", async () => {
+    const base = dirs[dirs.length - 1]!;
+    const proj = join(base, "gone");
+    await mkdir(proj, { recursive: true });
+
+    scriptRecon();
+    fake.script("m-planner", PLAN_MD);
+    for (const a of EXEC_AREAS) fake.script(`m-exec-${a}`, wire(a));
+    fake.script("m-monitor", ROLLUP_MD);
+
+    expect(await planCmd([GOAL, "--project", proj])).toBe(0);
+    expect(await approveCmd(["--yes"])).toBe(0);
+    await rm(proj, { recursive: true, force: true });
+    expect(await executeCmd([])).toBe(0);
+
+    const backendCall = fake.calls.find((c) => c.model === "m-exec-backend")!;
+    expect(callText(backendCall)).toContain("not accessible on this machine");
+  });
+
+  it("plan --project with a nonexistent path fails fast with exit 1", async () => {
+    const base = dirs[dirs.length - 1]!;
+    const { code, err } = await cliCode(planCmd, [GOAL, "--project", join(base, "missing")]);
+    expect(code).toBe(1);
+    expect(String(err)).toContain("--project");
+    expect(fake.calls).toEqual([]); // failed before any LLM spend
+  });
+
+  it("a bad --project with --force-area does NOT delete the pair before validating (exit 1, report intact)", async () => {
+    const base = dirs[dirs.length - 1]!;
+    scriptRecon();
+    fake.script("m-planner", PLAN_MD);
+    for (const a of EXEC_AREAS) fake.script(`m-exec-${a}`, wire(a));
+    fake.script("m-monitor", ROLLUP_MD);
+    fake.script("m-verifier", VERDICT_OK);
+
+    expect(await planCmd([GOAL])).toBe(0);
+    expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await executeCmd([])).toBe(0); // r001 terminal, backend report + workspace exist
+
+    const rp = meshPaths(root).round("r001");
+    const before = await safeRead(rp.report(rp.execPair("backend"), "backend"));
+    expect(before).not.toBeNull();
+
+    // A typo'd --project must abort BEFORE the destructive --force-area rm.
+    const { code } = await cliCode(executeCmd, ["--force-area", "backend", "--project", join(base, "typo")]);
+    expect(code).toBe(1);
+    expect(await safeRead(rp.report(rp.execPair("backend"), "backend"))).toBe(before);
+    expect(await safeRead(join(rp.workspaceFiles("backend"), "src", "backend.ts"))).not.toBeNull();
+  });
+
+  it("clears a stale project.json on a --force goal replacement without --project", async () => {
+    // Root parked in synthesis (recon done, no plan.md) with a project.json from
+    // an earlier --project run — the only phase where a --force re-goal proceeds.
+    await makeRoot(root, { goal: "Original goal" });
+    for (const a of RECON_AREAS) await addReconReport(root, a);
+    await writeFile(
+      join(root, "project.json"),
+      `${JSON.stringify({ path: join(root, "siteA"), host: "old@box" })}\n`,
+      "utf8",
+    );
+    fake.script("m-planner", PLAN_MD);
+
+    expect(await planCmd(["A completely different goal", "--force"])).toBe(0);
+    expect(await safeRead(join(root, "project.json"))).toBeNull();
   });
 
   it("malformed first attempt: corrective re-prompt wins, raw.md salvages, report path never holds a raw dump", async () => {

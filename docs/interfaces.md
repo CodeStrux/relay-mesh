@@ -118,6 +118,7 @@ export interface Config {
   apiKey: string; baseUrl: string; referer: string; title: string;
   relayRoot: string; profilesPath: string;
   monitorPollMs: number; maxFixRounds: number; debug: boolean;
+  execFileBytes: number; execBundleBytes: number; // executor source-context caps (RELAY_EXEC_*_BYTES)
   modelFor(envName: string): string;   // env value ?? DEFAULTS[envName] ?? throw MissingEnvError (friendly table)
 }
 export function loadConfig(opts?: { requireApiKey?: boolean }): Config; // process.loadEnvFile(".env") if present — never throw if .env missing
@@ -159,6 +160,28 @@ export function readUsage(usagePath: string): Promise<UsageLine[]>;
 ```ts
 /** Read-only project bundle for recon: git-aware file tree + key file contents, size-capped. */
 export function bundleProject(projectPath: string, capBytes?: number): Promise<string>; // default cap ~30_000
+
+/** Deterministic path-like tokens (backticked incl. [](){}+ route paths, slash paths, dotted
+ *  filenames, well-known extensionless files) from prose; rejects relay-internal artifact paths;
+ *  deduped in first-mention order across texts in the order given. */
+export function extractPathHints(texts: string[]): string[];
+
+export interface ExecutorBundle {
+  text: string;      // file tree + full file contents + context manifest
+  included: string[]; // rel paths inlined whole
+  omitted: string[];  // rel paths matched but not inlined (caps, binary, non-UTF-8) — named in the manifest
+  missing: string[];  // slash-hints that resolved to nothing (new-file candidates)
+}
+/** FULL current contents of the project files the hints reference, whole-file-or-nothing
+ *  under the caps (RELAY_EXEC_FILE_BYTES / RELAY_EXEC_BUNDLE_BYTES). No silent truncation.
+ *  Contained to the project via realpath (symlinks escaping the root are rejected); honors
+ *  .gitignore and the .git/.env guard; `area` strips a leading `<area>/` on a missed slash-hint. */
+export function bundleForExecutor(
+  projectPath: string,
+  hints: string[],
+  caps: { perFileBytes: number; totalBytes: number },
+  area?: string,
+): Promise<ExecutorBundle>;
 ```
 
 ## src/agents/call.ts

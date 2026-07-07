@@ -23,6 +23,7 @@ export interface RoundPaths {
 export interface MeshPaths {
   root: string;
   meshJson: string;
+  projectJson: string;
   goal: string;
   inputsDir: string;
   usage: string;
@@ -35,6 +36,7 @@ export function meshPaths(root: string): MeshPaths {
   return {
     root,
     meshJson: join(root, "mesh.json"),
+    projectJson: join(root, "project.json"),
     goal: join(root, "goal.md"),
     inputsDir: join(root, "inputs"),
     usage: join(root, "usage.ndjson"),

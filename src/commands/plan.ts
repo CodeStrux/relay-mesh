@@ -1,6 +1,7 @@
 /** plan: mint the relay root, copy attachments, run recon, synthesize the plan. */
-import { copyFile, mkdir, readFile, rename, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { copyFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { hostname, userInfo } from "node:os";
+import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { CallCtx } from "../agents/call.js";
 import { synthesizePlan } from "../agents/plan.js";
@@ -31,6 +32,31 @@ export function parseGoal(md: string): string {
 export async function readGoal(root: string): Promise<string | null> {
   const md = await safeRead(meshPaths(root).goal);
   return md === null ? null : parseGoal(md);
+}
+
+export interface ProjectRecord {
+  path: string;
+  host?: string;
+}
+
+/**
+ * The project checkout recorded by `plan --project`, or null. Advisory: the
+ * path was valid on the recording host and may not exist on this one.
+ */
+export async function readProjectRecord(root: string): Promise<ProjectRecord | null> {
+  const raw = await safeRead(meshPaths(root).projectJson);
+  if (raw === null) return null;
+  try {
+    const parsed = JSON.parse(raw) as { path?: unknown; host?: unknown };
+    if (typeof parsed.path === "string" && parsed.path !== "") {
+      return typeof parsed.host === "string"
+        ? { path: parsed.path, host: parsed.host }
+        : { path: parsed.path };
+    }
+  } catch {
+    // corrupt project.json — advisory record, treat as absent
+  }
+  return null;
 }
 
 let versionCache: string | null = null;
@@ -82,6 +108,28 @@ export async function run(argv: string[]): Promise<number> {
     );
   }
 
+  // Fail fast on a bad --project BEFORE any write or LLM spend: today's silent
+  // empty bundle helps nobody downstream.
+  let projectAbs: string | undefined;
+  if (values.project !== undefined) {
+    let isDir = false;
+    try {
+      isDir = (await stat(values.project)).isDirectory();
+    } catch {
+      // unreadable — handled below
+    }
+    if (!isDir) {
+      throw new Error(
+        [
+          `--project ${values.project}: not an accessible directory`,
+          "recon and executors bundle source files from the project checkout",
+          "fix the path and re-run plan",
+        ].join("\n"),
+      );
+    }
+    projectAbs = resolve(values.project);
+  }
+
   const config = loadConfig();
   const profiles = await loadProfiles(config.profilesPath);
   const root = config.relayRoot;
@@ -125,6 +173,23 @@ export async function run(argv: string[]): Promise<number> {
     await atomicWrite(paths.meshJson, `${JSON.stringify(mesh)}\n`);
   }
 
+  // Record where the project lives so execute (any round, any invocation) can
+  // bundle source files without re-passing the flag. Host-stamped: the path is
+  // advisory on other machines.
+  if (projectAbs !== undefined) {
+    const record = {
+      path: projectAbs,
+      host: `${userInfo().username}@${hostname()}`,
+      recorded: new Date().toISOString(),
+    };
+    await atomicWrite(paths.projectJson, `${JSON.stringify(record)}\n`);
+  } else if (values.force && goalArg !== undefined && existing !== null && goalArg !== existing) {
+    // --force replaced the goal with a different one and no new --project was
+    // given: the recorded project belongs to the old goal — drop it rather than
+    // feed the new goal's executors another project's bytes as authoritative.
+    await rm(paths.projectJson, { force: true });
+  }
+
   for (const attach of values.attach ?? []) {
     try {
       await stat(attach);
@@ -166,6 +231,8 @@ export async function run(argv: string[]): Promise<number> {
     transcriptsDir: paths.round(round).transcriptsDir,
   };
 
+  // Recon gets the raw flag value (byte-identical bundle header to prior runs);
+  // the resolved absolute path is only for project.json + execute.
   await runRecon(ctx, byRole(profiles, "recon"), { root, goal, projectPath: values.project });
   const execAreas = byRole(profiles, "executor").flatMap((p) => (p.area === undefined ? [] : [p.area]));
   await synthesizePlan(ctx, byRole(profiles, "planner")[0]!, { root, goal, execAreas });

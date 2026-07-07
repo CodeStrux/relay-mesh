@@ -9,6 +9,9 @@ Pair directories are byte-compatible with the `relay-to-sibling` skill conventio
 ```
 $RELAY_ROOT/
 ├── mesh.json                    # {"protocol":1,"created":"<ISO-8601>","tool":"relay-mesh@<version>"}
+├── project.json                 # optional; {"path":"<abs path>","host":"<user>@<host>","recorded":ISO}
+│                                #   written by `plan --project`; advisory — the path may not resolve on
+│                                #   another machine (execute degrades to per-ask blocks, or takes --project)
 ├── goal.md                      # the user's goal verbatim + attachment manifest; written once by `plan`
 ├── inputs/                      # copies of --attach files (immutable after plan)
 ├── usage.ndjson                 # one line per LLM call:
@@ -119,7 +122,8 @@ Designed so a relay root can later be shared across machines (syncthing/NFS):
 
 1. **Single writer per file.** Briefs: the approving CLI. `<area>.report.md`: the one executor
    for that area. `closure.json`: the roll-up step. `events.ndjson`: the monitoring host.
-   `plan.approval.json`: the approving human's CLI. No file ever has two writers → no locks.
+   `plan.approval.json`: the approving human's CLI. `project.json`: the plan CLI.
+   No file ever has two writers → no locks.
 2. **Atomic publication.** Every write goes to `<name>.part` in the same directory, then
    `rename(2)`. A visible file is always complete.
 3. **Readers ignore `*.part` and dot-prefixed entries.** (`watch` may display `.part` byte sizes

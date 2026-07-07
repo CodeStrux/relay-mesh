@@ -90,7 +90,9 @@ export async function run(argv: string[]): Promise<number> {
       }
       case "executing":
       case "rollup": {
-        lastCode = await executeCmd([]);
+        lastCode = await executeCmd(
+          values.project === undefined ? [] : ["--project", values.project],
+        );
         if (lastCode === 1 || lastCode === 3) return lastCode; // blocked pairs stop the chain
         break;
       }

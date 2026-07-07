@@ -1,6 +1,7 @@
 /** Execution phase: approved plan → exec pair briefs → parallel executors → artifacts + reports. */
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
+import { bundleForExecutor, extractPathHints } from "../context.js";
 import type { Profile } from "../profiles.js";
 import { extractArtifacts, writeArtifacts } from "../relay/artifacts.js";
 import { rollupPair } from "../relay/closure.js";
@@ -106,6 +107,54 @@ function synthBlockedReport(area: string, planRef: string, err: unknown): string
   );
 }
 
+/** Where execute found (or failed to find) the project checkout. */
+export interface ProjectRef {
+  path: string | null;
+  note: string | null; // shown to the executor when path is null
+}
+
+const NARROW_BLOCK_GUIDANCE =
+  "For any ask that requires modifying an existing file you cannot see, report THAT ask as blocked and name the exact relative path you need; asks that only create new files can proceed.";
+
+/**
+ * The `## Source files (current contents)` section: full bytes of every project
+ * file the corpus references (brief, goal, recon report, prior-round reports —
+ * so a prior blocked report naming a file guarantees it appears this round), or
+ * an explicit none-available note so the model blocks narrowly instead of
+ * fabricating.
+ */
+async function sourceFilesSection(
+  project: ProjectRef,
+  corpus: string[],
+  caps: { perFileBytes: number; totalBytes: number },
+  area: string,
+): Promise<string> {
+  const heading = "## Source files (current contents)";
+  if (project.path === null) {
+    const note = project.note ?? "No project was linked at plan time.";
+    return `${heading}\n\nNone available: ${note} ${NARROW_BLOCK_GUIDANCE}`;
+  }
+  const bundle = await bundleForExecutor(project.path, extractPathHints(corpus), caps, area);
+  return `${heading}\n\nComplete current contents of project files referenced by your brief — treat them as the exact on-disk state and base your replacement files on them. ${NARROW_BLOCK_GUIDANCE}\n\n${bundle.text}`;
+}
+
+/**
+ * This area's exec reports from every prior round, most-recent last. A blocked
+ * report names the exact files the executor needs; feeding all prior rounds (not
+ * just N-1) means the path survives a round where the area sits out the fix, so
+ * the loop converges instead of forgetting.
+ */
+async function priorAreaReports(root: string, round: string, area: string): Promise<string> {
+  const n = Number(round.slice(1));
+  const parts: string[] = [];
+  for (let i = 1; i < n; i++) {
+    const rp = meshPaths(root).round(`r${String(i).padStart(3, "0")}`);
+    const md = await safeRead(rp.report(rp.execPair(area), area));
+    if (md !== null) parts.push(md);
+  }
+  return parts.join("\n\n");
+}
+
 /** Prior-round context for fix rounds: reports, verdict, and workspace listing. */
 async function priorRoundContext(
   root: string,
@@ -145,7 +194,7 @@ async function priorRoundContext(
 export async function runExecute(
   ctx: CallCtx,
   executorProfiles: Profile[],
-  args: { root: string; goal: string; areas?: string[] },
+  args: { root: string; goal: string; areas?: string[]; project?: ProjectRef },
 ): Promise<void> {
   const rp = meshPaths(args.root).round(ctx.round);
   const planMd = await safeRead(rp.plan);
@@ -178,6 +227,21 @@ export async function runExecute(
   );
   const prior = await priorRoundContext(args.root, ctx.round);
 
+  // A recorded path may not exist on this box (multi-machine runs): degrade to
+  // an explicit note the executor sees, never a crash.
+  let project: ProjectRef = args.project ?? { path: null, note: null };
+  if (project.path !== null) {
+    try {
+      await stat(project.path);
+    } catch {
+      project = {
+        path: null,
+        note: `project path ${project.path} is not accessible on this machine.`,
+      };
+    }
+  }
+  const caps = { perFileBytes: ctx.config.execFileBytes, totalBytes: ctx.config.execBundleBytes };
+
   const results = await Promise.allSettled(
     targets.map(async (profile) => {
       const area = profile.area;
@@ -196,10 +260,20 @@ export async function runExecute(
       await atomicWrite(rp.brief(pairDir, area), brief);
 
       const recon = await findLatestReconReport(args.root, area);
+      // Extraction corpus in budget-priority order: the brief's asks, then the
+      // files prior blocked reports named (the recovery target must outrank a
+      // big recon file for the byte budget), then goal, then recon.
+      const priorReports = await priorAreaReports(args.root, ctx.round, area);
       const sections = [
         brief,
         `## Goal\n\n${args.goal}`,
         `## Recon report: ${area}\n\n${recon ?? "No recon report exists for this area."}`,
+        await sourceFilesSection(
+          project,
+          [brief, priorReports, args.goal, recon ?? ""],
+          caps,
+          area,
+        ),
         `## Workspace listing${prior ? " (prior round)" : ""}\n\n${
           prior ? prior.workspaceListing : await workspaceListing(args.root, ctx.round)
         }`,

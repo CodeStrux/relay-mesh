@@ -22,6 +22,7 @@ import {
   addExecReport,
   addPlan,
   addReconReport,
+  addRound,
   addRollup,
   addVerdict,
   makeRoot,
@@ -74,6 +75,8 @@ async function setup(
     profilesPath: join(promptDir, "profiles.json"),
     monitorPollMs: 5,
     maxFixRounds: 3,
+    execFileBytes: 65536,
+    execBundleBytes: 196608,
     debug: false,
     modelFor: (envName: string) => envName,
   };
@@ -355,6 +358,202 @@ describe("runExecute", () => {
     expect(backend.body).toContain("model offline");
     const frontend = parseReport((await safeRead(rp.report(rp.execPair("frontend"), "frontend")))!);
     expect(frontend.status?.status).toBe("complete");
+  });
+
+  it("feeds FULL source bytes of brief-referenced files between the recon and workspace sections", async () => {
+    const { dir, fake, ctx } = await setup();
+    await makeRoot(dir);
+    for (const a of RECON_AREAS) await addReconReport(dir, a);
+    await addPlan(dir, {
+      content:
+        "# Plan\n\n## Synthesis\n\nok\n\n## Domain brief: backend\n\n1. Update `_config.yml`.\n\n## Domain brief: frontend\n\nf\n\n## Domain brief: infra\n\ni\n",
+    });
+    await addApproval(dir);
+    const project = join(dir, ".project");
+    await mkdir(project, { recursive: true });
+    await writeFile(
+      join(project, "_config.yml"),
+      `site: demo\n${"c".repeat(2500)}\nTAIL_MARKER_FULL_BYTES\n`,
+      "utf8",
+    );
+    fake.script("M_EXEC_BACKEND", wire("backend"));
+
+    await runExecute(ctx, EXEC_PROFILES, {
+      root: dir,
+      goal: "G",
+      areas: ["backend"],
+      project: { path: project, note: null },
+    });
+
+    const text = textOf(fake.calls.find((c) => c.model === "M_EXEC_BACKEND")!);
+    expect(text).toContain("## Source files (current contents)");
+    expect(text).toContain("TAIL_MARKER_FULL_BYTES");
+    expect(text).toContain("Context manifest");
+    const recon = text.indexOf("## Recon report: backend");
+    const sources = text.indexOf("## Source files (current contents)");
+    const workspace = text.indexOf("## Workspace listing");
+    expect(recon).toBeGreaterThanOrEqual(0);
+    expect(sources).toBeGreaterThan(recon);
+    expect(workspace).toBeGreaterThan(sources);
+  });
+
+  it("without a project, the source section says so and instructs narrow blocks", async () => {
+    const { dir, fake, ctx } = await setup();
+    await approvedRoot(dir);
+    fake.script("M_EXEC_BACKEND", wire("backend"));
+
+    await runExecute(ctx, EXEC_PROFILES, { root: dir, goal: "G", areas: ["backend"] });
+
+    const text = textOf(fake.calls.find((c) => c.model === "M_EXEC_BACKEND")!);
+    expect(text).toContain("## Source files (current contents)");
+    expect(text).toContain("No project was linked at plan time");
+    expect(text).toContain("name the exact relative path");
+  });
+
+  it("an unreachable project path degrades to a visible in-prompt note", async () => {
+    const { dir, fake, ctx } = await setup();
+    await approvedRoot(dir);
+    fake.script("M_EXEC_BACKEND", wire("backend"));
+
+    await runExecute(ctx, EXEC_PROFILES, {
+      root: dir,
+      goal: "G",
+      areas: ["backend"],
+      project: { path: join(dir, "nope"), note: null },
+    });
+
+    const text = textOf(fake.calls.find((c) => c.model === "M_EXEC_BACKEND")!);
+    expect(text).toContain("## Source files (current contents)");
+    expect(text).toContain("not accessible on this machine");
+    expect(text).toContain("nope");
+  });
+
+  it("self-heals on fix rounds: a file named only in a prior blocked report is inlined", async () => {
+    const { dir, fake, ctx } = await setup("r002");
+    await makeRoot(dir);
+    for (const a of RECON_AREAS) await addReconReport(dir, a);
+    await addPlan(dir, { content: PLAN_OK });
+    await addApproval(dir);
+    await addExecReport(dir, "backend", {
+      status: "blocked",
+      body: "1. Blocked — I need the current contents of `src/deep/thing.ts`.\n",
+    });
+    await addExecReport(dir, "frontend", { status: "complete" });
+    await addExecReport(dir, "infra", { status: "complete" });
+    await addRollup(dir);
+    await addVerdict(dir, { satisfied: false, gaps: [{ area: "backend", description: "gap" }] });
+    await addRound(dir, "r002");
+    await addPlan(dir, {
+      round: "r002",
+      content: "# Plan\n\n## Synthesis\n\nfix\n\n## Domain brief: backend\n\nFinish the blocked ask.\n",
+    });
+    await addApproval(dir, { round: "r002", execAreas: ["backend"] });
+    const project = join(dir, ".project");
+    await mkdir(join(project, "src", "deep"), { recursive: true });
+    await writeFile(join(project, "src", "deep", "thing.ts"), "THING_BODY_MARKER\n", "utf8");
+    fake.script("M_EXEC_BACKEND", wire("backend"));
+
+    await runExecute(ctx, EXEC_PROFILES, {
+      root: dir,
+      goal: "G",
+      areas: ["backend"],
+      project: { path: project, note: null },
+    });
+
+    const text = textOf(fake.calls.find((c) => c.model === "M_EXEC_BACKEND")!);
+    expect(text).toContain("## Prior report");
+    expect(text).toContain("THING_BODY_MARKER");
+  });
+
+  it("carries a blocked path forward across a round the area sat out (r001 block → r003)", async () => {
+    const { dir, fake, ctx } = await setup("r003");
+    // r001: backend blocked naming a file; frontend/infra complete.
+    await makeRoot(dir);
+    for (const a of RECON_AREAS) await addReconReport(dir, a);
+    await addPlan(dir, { content: PLAN_OK });
+    await addApproval(dir);
+    await addExecReport(dir, "backend", {
+      status: "blocked",
+      body: "1. Blocked — I need the current contents of `src/db/schema.ts`.\n",
+    });
+    await addExecReport(dir, "frontend", { status: "complete" });
+    await addExecReport(dir, "infra", { status: "complete" });
+    await addRollup(dir);
+    await addVerdict(dir, { satisfied: false, gaps: [{ area: "frontend", description: "gap" }] });
+    // r002: only frontend re-briefed; backend sits out entirely.
+    await addRound(dir, "r002");
+    await addPlan(dir, {
+      round: "r002",
+      content: "# Plan\n\n## Synthesis\n\nfix\n\n## Domain brief: frontend\n\nFix the nav.\n",
+    });
+    await addApproval(dir, { round: "r002", execAreas: ["frontend"] });
+    await addExecReport(dir, "frontend", { round: "r002", status: "complete" });
+    await addRollup(dir, { round: "r002" });
+    await addVerdict(dir, { round: "r002", satisfied: false, gaps: [{ area: "backend", description: "gap" }] });
+    // r003: backend re-briefed WITHOUT naming the file.
+    await addRound(dir, "r003");
+    await addPlan(dir, {
+      round: "r003",
+      content: "# Plan\n\n## Synthesis\n\nfix\n\n## Domain brief: backend\n\nFinish the schema work.\n",
+    });
+    await addApproval(dir, { round: "r003", execAreas: ["backend"] });
+    const project = join(dir, ".project");
+    await mkdir(join(project, "src", "db"), { recursive: true });
+    await writeFile(join(project, "src", "db", "schema.ts"), "SCHEMA_CARRIED_MARKER\n", "utf8");
+    fake.script("M_EXEC_BACKEND", wire("backend"));
+
+    await runExecute(ctx, EXEC_PROFILES, {
+      root: dir,
+      goal: "G",
+      areas: ["backend"],
+      project: { path: project, note: null },
+    });
+
+    const text = textOf(fake.calls.find((c) => c.model === "M_EXEC_BACKEND")!);
+    expect(text).toContain("SCHEMA_CARRIED_MARKER");
+  });
+
+  it("funds the previously-blocked file before a big recon-named file under a tight budget", async () => {
+    const { dir, fake, ctx } = await setup("r002");
+    ctx.config.execBundleBytes = 100; // fits blocked.ts (20B) but not big.ts (~267B)
+    await makeRoot(dir);
+    // recon report (served in the fix round) names the big file.
+    await addReconReport(dir, "backend", {
+      body: "1. The bulk of the work is in `big.ts`.\n",
+    });
+    for (const a of ["frontend", "business", "vision"]) await addReconReport(dir, a);
+    await addPlan(dir, { content: PLAN_OK });
+    await addApproval(dir);
+    await addExecReport(dir, "backend", {
+      status: "blocked",
+      body: "1. Blocked — need the current `blocked.ts`.\n",
+    });
+    await addExecReport(dir, "frontend", { status: "complete" });
+    await addExecReport(dir, "infra", { status: "complete" });
+    await addRollup(dir);
+    await addVerdict(dir, { satisfied: false, gaps: [{ area: "backend", description: "gap" }] });
+    await addRound(dir, "r002");
+    await addPlan(dir, {
+      round: "r002",
+      content: "# Plan\n\n## Synthesis\n\nfix\n\n## Domain brief: backend\n\nFinish the work.\n",
+    });
+    await addApproval(dir, { round: "r002", execAreas: ["backend"] });
+    const project = join(dir, ".project");
+    await mkdir(project, { recursive: true });
+    await writeFile(join(project, "blocked.ts"), "BLOCKED_FILE_MARKER\n", "utf8");
+    await writeFile(join(project, "big.ts"), `BIG_FILE_MARKER\n${"z".repeat(250)}\n`, "utf8");
+    fake.script("M_EXEC_BACKEND", wire("backend"));
+
+    await runExecute(ctx, EXEC_PROFILES, {
+      root: dir,
+      goal: "G",
+      areas: ["backend"],
+      project: { path: project, note: null },
+    });
+
+    const text = textOf(fake.calls.find((c) => c.model === "M_EXEC_BACKEND")!);
+    expect(text).toContain("BLOCKED_FILE_MARKER");
+    expect(text).not.toContain("BIG_FILE_MARKER");
   });
 
   it("--area filter and per-pair resume both skip calls", async () => {

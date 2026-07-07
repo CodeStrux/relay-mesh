@@ -11,6 +11,8 @@ export interface Config {
   profilesPath: string;
   monitorPollMs: number;
   maxFixRounds: number;
+  execFileBytes: number;
+  execBundleBytes: number;
   debug: boolean;
   modelFor(envName: string): string;
 }
@@ -56,6 +58,8 @@ const envSchema = z.object({
   RELAY_PROFILES: z.string().optional(),
   MONITOR_POLL_MS: z.coerce.number().int().positive().default(15000),
   MAX_FIX_ROUNDS: z.coerce.number().int().positive().default(3),
+  RELAY_EXEC_FILE_BYTES: z.coerce.number().int().positive().default(65536),
+  RELAY_EXEC_BUNDLE_BYTES: z.coerce.number().int().positive().default(196608),
   RELAY_DEBUG: z.string().optional(),
 });
 
@@ -111,6 +115,8 @@ export function loadConfig(opts: { requireApiKey?: boolean } = {}): Config {
     profilesPath: env.RELAY_PROFILES ?? BUNDLED_PROFILES_PATH,
     monitorPollMs: env.MONITOR_POLL_MS,
     maxFixRounds: env.MAX_FIX_ROUNDS,
+    execFileBytes: env.RELAY_EXEC_FILE_BYTES,
+    execBundleBytes: env.RELAY_EXEC_BUNDLE_BYTES,
     debug: env.RELAY_DEBUG === "1",
     modelFor(envName: string): string {
       const value = process.env[envName];

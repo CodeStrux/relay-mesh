@@ -1,8 +1,10 @@
 /** execute: hash check → monitor poller → parallel executors → poller stop → roll-up. */
-import { rm } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
+import { hostname, userInfo } from "node:os";
+import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { CallCtx } from "../agents/call.js";
-import { ApprovalMismatchError, runExecute } from "../agents/execute.js";
+import { ApprovalMismatchError, type ProjectRef, runExecute } from "../agents/execute.js";
 import { runRollup, startPoller } from "../agents/monitor.js";
 import { extractDomainBriefs } from "../agents/plan.js";
 import { loadConfig } from "../config.js";
@@ -11,8 +13,54 @@ import { byRole, loadProfiles } from "../profiles.js";
 import { safeRead } from "../relay/fsio.js";
 import { meshPaths } from "../relay/paths.js";
 import { deriveState } from "../relay/state.js";
-import { readGoal } from "./plan.js";
+import { readGoal, readProjectRecord } from "./plan.js";
 import { readPairRows } from "./status.js";
+
+/**
+ * Where executors read source bytes from: --project flag > project.json > none.
+ * An explicit flag that doesn't resolve is an operator error (throw); a recorded
+ * path that doesn't resolve on THIS box degrades to a visible note.
+ */
+async function resolveProject(root: string, flag: string | undefined): Promise<ProjectRef> {
+  if (flag !== undefined) {
+    let isDir = false;
+    try {
+      isDir = (await stat(flag)).isDirectory();
+    } catch {
+      // unreadable — handled below
+    }
+    if (!isDir) {
+      throw new Error(
+        [
+          `--project ${flag}: not an accessible directory`,
+          "executors bundle source files from the project checkout",
+          "fix the path and re-run execute",
+        ].join("\n"),
+      );
+    }
+    return { path: resolve(flag), note: null };
+  }
+  const record = await readProjectRecord(root);
+  if (record === null) return { path: null, note: null };
+  try {
+    await stat(record.path);
+    // Shared root (syncthing/NFS): the recorded path resolves here, but it was
+    // recorded on another machine — a coincidental same-path collision would
+    // bundle the wrong project. Surface it so the operator can pass --project.
+    const here = `${userInfo().username}@${hostname()}`;
+    if (record.host !== undefined && record.host !== here) {
+      console.log(
+        `note: using project.json path ${record.path} recorded on ${record.host} (this box is ${here}); pass --project to override`,
+      );
+    }
+    return { path: record.path, note: null };
+  } catch {
+    const where = record.host === undefined ? "" : ` (recorded on ${record.host})`;
+    const note = `project path ${record.path}${where} is not accessible on this machine.`;
+    console.log(`warning: ${note} pass --project <local-checkout> or expect precise blocks`);
+    return { path: null, note };
+  }
+}
 
 export async function run(argv: string[]): Promise<number> {
   const { values } = parseArgs({
@@ -20,6 +68,7 @@ export async function run(argv: string[]): Promise<number> {
     options: {
       area: { type: "string", multiple: true },
       "force-area": { type: "string", multiple: true },
+      project: { type: "string" },
     },
   });
 
@@ -79,6 +128,9 @@ export async function run(argv: string[]): Promise<number> {
 
   const paths = meshPaths(root);
   const rp = paths.round(round);
+  // Resolve --project BEFORE the destructive --force-area rm: a bad flag must
+  // fail fast, never delete a terminal pair and then exit 1.
+  const project = await resolveProject(root, values.project);
   // --force-area is the one sanctioned per-pair override: clear that pair's
   // report + workspace within the current round so the executor re-runs.
   for (const a of forceFlags) {
@@ -106,7 +158,7 @@ export async function run(argv: string[]): Promise<number> {
 
   const poller = startPoller(root, round, config.monitorPollMs);
   try {
-    await runExecute(ctx, executors, { root, goal, areas });
+    await runExecute(ctx, executors, { root, goal, areas, project });
   } finally {
     await poller.stop();
   }

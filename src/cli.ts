@@ -34,7 +34,8 @@ commands:
                                             mint the relay root, run recon, synthesize the plan
   approve [--round rNNN] [--yes] [--reject "notes"]
                                             human gate: pin sha256(plan.md), write exec briefs
-  execute [--area a]… [--force-area a]…     parallel executors + monitor poller + roll-up
+  execute [--area a]… [--force-area a]… [--project p]
+                                            parallel executors + monitor poller + roll-up
   verify [--round rNNN]                     verdict vs the goal; scaffolds a fix round on gaps
   run ["<goal>"] [plan flags] [--yes]       chain plan → approve → execute → verify (resumable)
   status [--json]                           derived state, per-area table, spend, next command
