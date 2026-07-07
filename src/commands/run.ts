@@ -78,7 +78,7 @@ export async function run(argv: string[]): Promise<number> {
         if (values.project !== undefined) args.push("--project", values.project);
         if (values.force) args.push("--force");
         lastCode = await planCmd(args);
-        // 2 = a recon blocked — the approve gate surfaces it for the human next.
+        // 3 = a recon blocked — the approve gate surfaces it for the human next.
         if (lastCode === 1) return 1;
         break;
       }

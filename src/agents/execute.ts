@@ -89,7 +89,7 @@ function synthPartialReport(
       steps_total: 0,
       plan_ref: planRef,
     }) +
-    `\nExecutor output failed to parse after one corrective re-prompt; the verbatim output is preserved at rounds/${round}/workspace/${area}/raw.md.\n\nParse problems:\n${problems.map((p) => `- ${p}`).join("\n")}\n`
+    `\nExecutor output failed to parse cleanly after one corrective re-prompt; the verbatim output is preserved at rounds/${round}/workspace/${area}/raw.md.\n\nParse problems:\n${problems.map((p) => `- ${p}`).join("\n")}\n`
   );
 }
 
@@ -213,22 +213,31 @@ export async function runExecute(
       };
 
       try {
-        // The wire output streams to the report path for liveness; it never parses
-        // as a report, so the pair stays in-flight until the real report lands below.
+        // The wire output streams only to the report's .part (liveness): a raw
+        // dump can open with a bare status block and parse as a report, so it
+        // must never be published verbatim — the pair stays in-flight until the
+        // real report lands below (publish: false).
         let output = await callProfile(
           ctx,
           profile,
           [{ type: "text", text: sections.join("\n\n") }],
           reportPath,
           vars,
+          { publish: false },
         );
         let res = extractArtifacts(output);
-        if (res.reportMd === null) {
+        // ANY parse problem (missing report, unterminated or rejected FILE
+        // blocks) earns the ONE corrective re-prompt the protocol guarantees.
+        if (res.reportMd === null || res.problems.length > 0) {
+          // Salvage the first attempt before re-prompting: its parsed FILE
+          // blocks land in the workspace and raw.md keeps the verbatim text,
+          // so a report-only corrective answer never loses tokens.
+          await writeArtifacts(res, rp.workspace(area), output);
           const corrective = [
             sections.join("\n\n"),
             "## Correction required",
             `Your previous output could not be parsed: ${res.problems.join("; ")}.`,
-            "Re-emit your ENTIRE response in the wire format: zero or more `=== FILE: <path> ===` … `=== END ===` blocks, then exactly one `=== REPORT ===` section whose first line is `---` (the status block).",
+            "Re-emit your ENTIRE response in the wire format: zero or more `=== FILE: <path> ===` … `=== END ===` blocks (each closed by `=== END ===`), then exactly one `=== REPORT ===` section whose first line is `---` (the status block).",
           ].join("\n\n");
           output = await callProfile(
             ctx,
@@ -236,13 +245,16 @@ export async function runExecute(
             [{ type: "text", text: corrective }],
             reportPath,
             vars,
+            { publish: false },
           );
           res = extractArtifacts(output);
         }
         await writeArtifacts(res, rp.workspace(area), output);
         await atomicWrite(
           reportPath,
-          res.reportMd ?? synthPartialReport(area, planRef, ctx.round, res.problems),
+          res.reportMd !== null && res.problems.length === 0
+            ? res.reportMd
+            : synthPartialReport(area, planRef, ctx.round, res.problems),
         );
       } catch (err) {
         await atomicWrite(reportPath, synthBlockedReport(area, planRef, err));

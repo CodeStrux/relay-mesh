@@ -1,7 +1,7 @@
 /** Synthesis phase: one planner call over goal + recon reports → rounds/rX/plan.md. */
 import { join } from "node:path";
 import type { Profile } from "../profiles.js";
-import { listVisible, safeRead } from "../relay/fsio.js";
+import { atomicWrite, listVisible, safeRead } from "../relay/fsio.js";
 import { meshPaths } from "../relay/paths.js";
 import { callProfile, type CallCtx } from "./call.js";
 
@@ -85,7 +85,12 @@ export async function synthesizePlan(
   const baseText = sections.join("\n\n");
   const vars = { GOAL: args.goal, ROUND: ctx.round };
 
-  let planMd = await callProfile(ctx, planner, [{ type: "text", text: baseText }], rp.plan, vars);
+  // publish: false — a lint-failing first attempt must never sit at rounds/rX/plan.md
+  // (deriveState would read it as awaiting-approval if the corrective call is killed).
+  // The .part still streams for liveness; the settled plan is published below.
+  let planMd = await callProfile(ctx, planner, [{ type: "text", text: baseText }], rp.plan, vars, {
+    publish: false,
+  });
 
   const problems = lintPlan(planMd, args.execAreas);
   if (problems.length > 0) {
@@ -97,8 +102,14 @@ export async function synthesizePlan(
       "## Your previous plan",
       planMd,
     ].join("\n\n");
-    planMd = await callProfile(ctx, planner, [{ type: "text", text: corrective }], rp.plan, vars);
+    planMd = await callProfile(ctx, planner, [{ type: "text", text: corrective }], rp.plan, vars, {
+      publish: false,
+    });
   }
+
+  // Published even when briefs are still missing: the error below tells the
+  // operator to edit plan.md by hand, so it must exist on disk.
+  await atomicWrite(rp.plan, planMd);
 
   const missing = args.execAreas.filter((a) => !extractDomainBriefs(planMd).has(a));
   if (missing.length > 0) {

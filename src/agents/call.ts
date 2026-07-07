@@ -39,6 +39,11 @@ function partText(p: LlmContentPart): string {
  * (liveness signal for watchers), publish `outPath` atomically on success,
  * append a usage line, and save the raw transcript. On failure the error
  * propagates verbatim — callers synthesize blocked reports from it.
+ *
+ * `publish: false` skips the final rename: the `.part` still streams for
+ * liveness, but the raw output never becomes protocol-visible — the caller
+ * publishes the real artifact (executor wire output can parse as a report,
+ * so it must never land at a report path verbatim).
  */
 export async function callProfile(
   ctx: CallCtx,
@@ -46,6 +51,7 @@ export async function callProfile(
   userParts: LlmContentPart[],
   outPath: string,
   vars: Record<string, string>,
+  opts: { publish?: boolean } = {},
 ): Promise<string> {
   // profile.prompt paths are relative to the profiles.json that declared them.
   const promptPath = isAbsolute(profile.prompt)
@@ -76,7 +82,7 @@ export async function callProfile(
   // No stray append may land between atomicWrite's .part rewrite and its rename.
   await appends;
 
-  await atomicWrite(outPath, result.text);
+  if (opts.publish ?? true) await atomicWrite(outPath, result.text);
 
   await recordUsage(ctx.usagePath, {
     ts: new Date().toISOString(),

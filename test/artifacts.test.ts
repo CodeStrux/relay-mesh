@@ -149,4 +149,16 @@ describe("writeArtifacts", () => {
     expect(await readFile(join(dir, "files", "kept.ts"), "utf8")).toBe("export const kept = true;\n");
     expect(await readFile(join(dir, "raw.md"), "utf8")).toBe(output);
   });
+
+  it("salvages raw.md when the report parses but a FILE block was malformed (tokens never lost)", async () => {
+    const dir = await ws();
+    // Unterminated FILE block: its 300-lines-of-code moment — the content is
+    // discarded by the parser, so the verbatim output MUST survive at raw.md.
+    const output = "=== FILE: src/a.ts ===\nconst a = 1;\n" + REPORT;
+    const res = extractArtifacts(output);
+    expect(res.reportMd).not.toBeNull();
+    expect(res.problems).toEqual(["unterminated FILE block: src/a.ts"]);
+    await writeArtifacts(res, dir, output);
+    expect(await readFile(join(dir, "raw.md"), "utf8")).toBe(output);
+  });
 });

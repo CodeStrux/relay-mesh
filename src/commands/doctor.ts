@@ -30,20 +30,27 @@ function levenshtein(a: string, b: string): number {
   return row[b.length]!;
 }
 
-/** Nearest model id: case-insensitive substring match wins, else smallest edit distance. */
+/**
+ * Nearest model id: case-insensitive substring matches win, ranked by edit
+ * distance (ties break lexicographically) so the suggestion is deterministic
+ * and never depends on the API's list order; else smallest edit distance overall.
+ */
 export function suggestModel(slug: string, ids: string[]): string | null {
   const s = slug.toLowerCase();
-  const sub = ids.find((id) => id.toLowerCase().includes(s) || s.includes(id.toLowerCase()));
-  if (sub !== undefined) return sub;
+  const subs = ids.filter((id) => id.toLowerCase().includes(s) || s.includes(id.toLowerCase()));
+  const pool = subs.length > 0 ? subs : ids;
   let best: string | null = null;
   let bestD = Infinity;
-  for (const id of ids) {
+  for (const id of pool) {
     const d = levenshtein(s, id.toLowerCase());
-    if (d < bestD) {
+    if (d < bestD || (d === bestD && best !== null && id < best)) {
       bestD = d;
       best = id;
     }
   }
+  // A "did you mean" only helps when it's plausibly the same slug: substring
+  // hits always qualify; otherwise cap the edit distance at a third of the input.
+  if (subs.length === 0 && bestD > Math.max(3, Math.floor(s.length / 3))) return null;
   return best;
 }
 
@@ -66,7 +73,8 @@ export async function run(argv: string[]): Promise<number> {
     profiles = await loadProfiles(config.profilesPath);
     push("profiles", true, `${profiles.length} profiles (${config.profilesPath})`);
   } catch (err) {
-    push("profiles", false, (err as Error).message);
+    // Errors are three lines; the table cell takes the "what broke" line only.
+    push("profiles", false, (err as Error).message.split("\n")[0]!);
   }
 
   if (profiles.length > 0) {

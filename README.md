@@ -73,7 +73,7 @@ Exit codes are uniform across commands: `0` success / terminal-good · `1` error
 
 | Command | Arguments | Reads | Writes | Notes |
 |---|---|---|---|---|
-| `doctor` | `[--models]` | `.env`, `profiles.json`, `prompts/`, relay root | nothing | Env/key/prompt/root checks; `--models` validates model slugs live against OpenRouter `/models` with fuzzy suggestions. Run first, always. |
+| `doctor` | `[--models]` | `.env`, `profiles.json`, `prompts/`, relay root | nothing | Env/key/prompt/root checks; whenever a key is set, model slugs are validated live against OpenRouter `/models` with fuzzy suggestions; `--models` additionally prints the full model list. Run first, always. |
 | `plan` | `"<goal>" [--attach file…] [--project path]` | goal, attachments, project files (read-only) | `goal.md`, `inputs/`, recon pair dirs, `rounds/rNNN/plan.md` | Deterministic recon briefs (no LLM before recon); 4-way parallel recon — the vision profile receives attachments as image/video parts; one planner synthesis call. |
 | `approve` | `[--round rNNN] [--reject "notes"]` | `plan.md` | `plan.approval.json`, exec briefs | Interactive gate; requires typing `approve`. Pins `sha256(plan.md)`. Briefs are extracted deterministically from the approved plan. |
 | `execute` | `[--area a…]` | approval, briefs, plan hash | `<area>.report.md`, `workspace/<area>/`, `monitor/events.ndjson`, `monitor/rollup.md`, `closure.json` | Refuses on plan-hash mismatch (exit 1). Parallel executors; deterministic monitor poller; one monitor roll-up LLM call at phase end. Idempotent per pair; `--area` is the multi-machine split seam. |
@@ -196,7 +196,7 @@ Malformed executor output gets one corrective re-prompt; if it is still malforme
 
 ## Troubleshooting
 
-- **Start with `npx relay-mesh doctor`.** It checks the env, the key, the prompt files, and the relay root, and (with `--models`) validates every model slug live with suggestions for near-misses.
+- **Start with `npx relay-mesh doctor`.** It checks the env, the key, the prompt files, and the relay root, and — whenever a key is set — validates every model slug live with suggestions for near-misses (`--models` also prints the full model list).
 - **`blocked` is not a failure.** Exit code 3 means an agent held work for your clearance. Read the area's report, resolve the blocker, and re-run `execute` — only pairs without a parseable report re-launch.
 - **Resume is just re-running.** There is no daemon and no hidden state; every command derives everything from disk. A killed `execute` re-run picks up exactly the pairs that never finished.
 - **Errors are three lines**: what broke, what the tool believes, what to do next. Set `RELAY_DEBUG=1` for stack traces.

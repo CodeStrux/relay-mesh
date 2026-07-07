@@ -80,7 +80,7 @@ Shape:
   "pair": "planner__backend",
   "generated": "2026-07-06T21:00:00Z",
   "briefs": [
-    { "area": "backend", "status": "complete", "steps_done": 5, "steps_total": 5, "pct": 100 }
+    { "area": "backend", "status": "complete", "steps_done": 5, "steps_total": 5, "pct": 100, "plan_ref": "rounds/r001/plan.md" }
   ],
   "totals": { "pct": 100, "blocked": [] }
 }

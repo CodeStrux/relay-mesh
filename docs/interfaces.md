@@ -20,8 +20,9 @@ export function serializeStatusBlock(s: StatusBlock): string; // "---\narea: …
 ## src/relay/closure.ts
 
 ```ts
-import type { Status } from "./report.js";
-export interface ClosureBrief { area: string; status: Status; steps_done: number; steps_total: number; pct: number; }
+// status is a plain string for relay-close.sh byte-parity (the awk carries the
+// report's value verbatim); canonical values are the Status union.
+export interface ClosureBrief { area: string; status: string; steps_done: number; steps_total: number; pct: number; plan_ref: string; }
 export interface Closure {
   pair: string; generated: string; briefs: ClosureBrief[];
   totals: { pct: number; blocked: string[] };
@@ -84,7 +85,8 @@ export interface ExtractResult {
 }
 export function extractArtifacts(output: string): ExtractResult;                    // pure parse
 export function writeArtifacts(res: ExtractResult, areaWorkspaceDir: string, output: string): Promise<void>;
-// writes files under <ws>/files/ (paths validated), raw.md when reportMd === null
+// writes files under <ws>/files/ (paths validated); raw.md when reportMd === null
+// or problems is non-empty — tokens are never lost (docs/protocol.md)
 ```
 
 ## src/openrouter.ts
@@ -165,8 +167,10 @@ export function bundleProject(projectPath: string, capBytes?: number): Promise<s
 import type { LlmClient } from "../openrouter.js";
 import type { Profile } from "../profiles.js";
 export interface CallCtx { client: LlmClient; config: import("../config.js").Config; round: string; usagePath: string; transcriptsDir: string; }
-/** One profile call: compose prompt → stream to <outPath>.part (via onChunk) → rename; usage line; transcript. */
-export function callProfile(ctx: CallCtx, profile: Profile, userParts: import("../openrouter.js").LlmContentPart[], outPath: string, vars: Record<string, string>): Promise<string>; // returns final text
+/** One profile call: compose prompt → stream to <outPath>.part (via onChunk) → rename; usage line; transcript.
+ *  publish: false skips the rename — the .part still streams for liveness and the CALLER publishes
+ *  (raw executor/planner output must never become protocol-visible before it is vetted). */
+export function callProfile(ctx: CallCtx, profile: Profile, userParts: import("../openrouter.js").LlmContentPart[], outPath: string, vars: Record<string, string>, opts?: { publish?: boolean }): Promise<string>; // returns final text
 ```
 
 ## CLI conventions (src/cli.ts + src/commands/*)

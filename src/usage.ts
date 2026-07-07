@@ -1,6 +1,5 @@
 /** usage.ndjson accounting — one line per LLM call, single-host writer per protocol. */
-import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { appendLine, safeRead } from "./relay/fsio.js";
 
 export interface UsageLine {
   ts: string;
@@ -11,24 +10,36 @@ export interface UsageLine {
   out: number;
 }
 
+/** Shape guard: a valid-JSON line of the wrong shape (hand edit, other tool
+ *  version, sync conflict-merge) must not poison the sums with NaN. */
+function isUsageLine(v: unknown): v is UsageLine {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.ts === "string" &&
+    typeof o.round === "string" &&
+    typeof o.profile === "string" &&
+    typeof o.model === "string" &&
+    typeof o.in === "number" &&
+    Number.isFinite(o.in) &&
+    typeof o.out === "number" &&
+    Number.isFinite(o.out)
+  );
+}
+
 export async function recordUsage(usagePath: string, line: UsageLine): Promise<void> {
-  await mkdir(dirname(usagePath), { recursive: true });
-  await appendFile(usagePath, JSON.stringify(line) + "\n", "utf8");
+  await appendLine(usagePath, JSON.stringify(line));
 }
 
 export async function readUsage(usagePath: string): Promise<UsageLine[]> {
-  let raw: string;
-  try {
-    raw = await readFile(usagePath, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw err;
-  }
+  const raw = await safeRead(usagePath); // missing file (or a file mid-path) => no usage
+  if (raw === null) return [];
   const lines: UsageLine[] = [];
   for (const l of raw.split("\n")) {
     if (l.trim() === "") continue;
     try {
-      lines.push(JSON.parse(l) as UsageLine);
+      const parsed: unknown = JSON.parse(l);
+      if (isUsageLine(parsed)) lines.push(parsed);
     } catch {
       // Torn trailing line mid-append on a shared root — skip, never crash a read.
     }

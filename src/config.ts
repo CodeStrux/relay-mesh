@@ -83,7 +83,13 @@ export function loadConfig(opts: { requireApiKey?: boolean } = {}): Config {
     const detail = parsed.error.issues
       .map((i) => `${i.path.join(".")}: ${i.message}`)
       .join("; ");
-    throw new Error(`invalid environment — ${detail}`);
+    throw new Error(
+      [
+        `invalid environment — ${detail}`,
+        "these variables come from .env or the shell and must parse before any command can run",
+        "fix the listed variables (see .env.example), then re-run",
+      ].join("\n"),
+    );
   }
   const env = parsed.data;
 

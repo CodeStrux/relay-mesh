@@ -96,9 +96,16 @@ export async function run(argv: string[]): Promise<number> {
     verdict = await runVerify(ctx, byRole(profiles, "verifier")[0]!, { root, goal });
   }
 
+  // Blocked pairs exit 3 on EVERY verdict (protocol: "blocked outcomes present → 3",
+  // all commands) — status returns 3 on this exact tree, so verify must agree.
+  const blocked = (await readPairRows(root, round)).some(
+    (r) => r.kind === "exec" && r.block?.status === "blocked",
+  );
+
   if (verdict.satisfied) {
     console.log("verdict: satisfied — the outcome matches the goal");
-    return 0;
+    if (blocked) console.log("blocked exec pairs remain held for operator attention");
+    return blocked ? 3 : 0;
   }
   console.log("verdict: NOT satisfied");
   verdict.gaps.forEach((g, i) => console.log(`  ${i + 1}. [${g.area}] ${g.description}`));
@@ -112,8 +119,5 @@ export async function run(argv: string[]): Promise<number> {
     console.log(`max fix rounds reached (MAX_FIX_ROUNDS=${config.maxFixRounds}) — no fix round scaffolded`);
   }
 
-  const blocked = (await readPairRows(root, round)).some(
-    (r) => r.kind === "exec" && r.block?.status === "blocked",
-  );
   return blocked ? 3 : 2;
 }

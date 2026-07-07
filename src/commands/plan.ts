@@ -1,5 +1,5 @@
 /** plan: mint the relay root, copy attachments, run recon, synthesize the plan. */
-import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { CallCtx } from "../agents/call.js";
@@ -109,6 +109,17 @@ export async function run(argv: string[]): Promise<number> {
   }
   const goal = goalArg ?? existing!;
 
+  // The nothing-to-plan guard runs BEFORE any write: past synthesis, plan must
+  // not mint mesh.json, mutate inputs/ (immutable after plan), or touch goal.md.
+  const state = await deriveState(root);
+  if (state.round !== null && !["recon", "synthesis"].includes(state.phase)) {
+    const blocked = await blockedReconAreas(root, state.round);
+    console.log(`rounds/${state.round}/plan.md already exists (phase: ${state.phase}) — nothing to plan`);
+    if (blocked.length) console.log(`blocked recon pairs: ${blocked.join(", ")}`);
+    console.log(`next: ${nextCommand(state)}`);
+    return blocked.length ? 3 : 0;
+  }
+
   if ((await safeRead(paths.meshJson)) === null) {
     const mesh = { protocol: 1, created: new Date().toISOString(), tool: `relay-mesh@${await toolVersion()}` };
     await atomicWrite(paths.meshJson, `${JSON.stringify(mesh)}\n`);
@@ -127,7 +138,11 @@ export async function run(argv: string[]): Promise<number> {
       );
     }
     await mkdir(paths.inputsDir, { recursive: true });
-    await copyFile(attach, join(paths.inputsDir, basename(attach)));
+    // Protocol rule 2: .part + rename, so a reader on a shared root never sees
+    // a half-copied attachment.
+    const dest = join(paths.inputsDir, basename(attach));
+    await copyFile(attach, `${dest}.part`);
+    await rename(`${dest}.part`, dest);
   }
 
   // goal.md is written once; only --force with an explicit new goal replaces it.
@@ -135,14 +150,6 @@ export async function run(argv: string[]): Promise<number> {
     await atomicWrite(paths.goal, goalMd(goal, await inputsManifest(root)));
   }
 
-  const state = await deriveState(root);
-  if (state.round !== null && !["recon", "synthesis"].includes(state.phase)) {
-    const blocked = await blockedReconAreas(root, state.round);
-    console.log(`rounds/${state.round}/plan.md already exists (phase: ${state.phase}) — nothing to plan`);
-    if (blocked.length) console.log(`blocked recon pairs: ${blocked.join(", ")}`);
-    console.log(`next: ${nextCommand(state)}`);
-    return blocked.length ? 2 : 0;
-  }
   const round = state.round ?? nextRound(await listVisible(paths.roundsDir));
 
   const client = makeOpenRouterClient({
@@ -169,5 +176,6 @@ export async function run(argv: string[]): Promise<number> {
     console.log(`blocked recon pairs (held for operator attention): ${blocked.join(", ")}`);
   }
   console.log("next: relay-mesh approve");
-  return blocked.length ? 2 : 0;
+  // Blocked outcomes are first-class and exit 3 across all commands (protocol exit table).
+  return blocked.length ? 3 : 0;
 }

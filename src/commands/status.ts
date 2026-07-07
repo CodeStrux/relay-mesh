@@ -6,7 +6,7 @@ import { loadConfig } from "../config.js";
 import { listVisible, safeRead } from "../relay/fsio.js";
 import { meshPaths } from "../relay/paths.js";
 import { parseReport, type StatusBlock } from "../relay/report.js";
-import { deriveState, type RunState } from "../relay/state.js";
+import { areaOf, deriveState, type RunState } from "../relay/state.js";
 import { aggregate, readUsage } from "../usage.js";
 
 export interface PairRow {
@@ -50,15 +50,7 @@ export async function readPairRows(root: string, round: string): Promise<PairRow
       if (!pair.includes("__")) continue; // pair dirs are always <from>__<to>
       const pairDir = join(parent, pair);
       const files = await listVisible(pairDir);
-      const brief = files.find((f) => f.endsWith(".brief.md"));
-      const report = files.find((f) => f.endsWith(".report.md"));
-      let area: string;
-      if (brief !== undefined) area = brief.slice(0, -".brief.md".length);
-      else if (report !== undefined) area = report.slice(0, -".report.md".length);
-      else {
-        const tail = pair.replace(/^.*__/, "");
-        area = kind === "recon" ? tail.replace(/^recon-/, "") : tail;
-      }
+      const area = areaOf(pair, files, kind === "recon"); // the same rule deriveState uses
       const reportPath = join(pairDir, `${area}.report.md`);
       const md = await safeRead(reportPath);
       const block = md === null ? null : parseReport(md).status;

@@ -368,3 +368,85 @@ describe("orchestrator full loop", () => {
     expect(fake.calls.filter((c) => c.model === "m-planner")).toHaveLength(1);
   });
 });
+
+describe("review-confirmed edges", () => {
+  it("reject → revise plan dropping a domain → re-approve prunes the stale pair; no wedge", async () => {
+    scriptRecon();
+    fake.script("m-planner", PLAN_MD);
+    expect(await planCmd([GOAL])).toBe(0);
+
+    expect(await approveCmd(["--reject", "not enough detail"])).toBe(2);
+    expect((await deriveState(root)).phase).toBe("replanning");
+
+    // Human revises the plan by hand: backend brief dropped entirely.
+    const rp = meshPaths(root).round("r001");
+    await writeFile(
+      rp.plan,
+      "# Plan v2\n\n## Domain brief: frontend\n\n1. Build the UI.\n\n## Domain brief: infra\n\n1. Provision the box.\n",
+      "utf8",
+    );
+    expect(await approveCmd(["--yes"])).toBe(0);
+
+    fake.script("m-exec-frontend", wire("frontend"));
+    fake.script("m-exec-infra", wire("infra"));
+    fake.script("m-monitor", ROLLUP_MD);
+    fake.script("m-verifier", VERDICT_OK);
+    expect(await executeCmd([])).toBe(0);
+
+    // The stale backend pair (briefed under the rejected plan) must be gone,
+    // otherwise deriveState wedges at "executing" forever.
+    const state = await deriveState(root);
+    expect(state.exec.map((p) => p.area).sort()).toEqual(["frontend", "infra"]);
+    expect(state.phase).toBe("verifying");
+    expect(await verifyCmd([])).toBe(0);
+    expect((await deriveState(root)).phase).toBe("done");
+  });
+
+  it("approve refuses a terminal round (verdict exists)", async () => {
+    scriptRecon();
+    fake.script("m-planner", PLAN_MD);
+    for (const a of EXEC_AREAS) fake.script(`m-exec-${a}`, wire(a));
+    fake.script("m-monitor", ROLLUP_MD);
+    fake.script("m-verifier", VERDICT_OK);
+    await planCmd([GOAL]);
+    await approveCmd(["--yes"]);
+    await executeCmd([]);
+    await verifyCmd([]);
+    expect((await deriveState(root)).phase).toBe("done");
+
+    const { code } = await cliCode(approveCmd, ["--yes"]);
+    expect(code).toBe(1); // nothing in a terminal round is rewritten
+  });
+
+  it("malformed first attempt: corrective re-prompt wins, raw.md salvages, report path never holds a raw dump", async () => {
+    scriptRecon();
+    fake.script("m-planner", PLAN_MD);
+    // First attempt is a bare status block — it PARSES as a report but is not
+    // wire format; it must never be published at the report path.
+    const bare =
+      "---\narea: backend\nstatus: complete\nsteps_done: 1\nsteps_total: 1\nplan_ref: rounds/r001/plan.md\n---\nProse instead of wire.\n";
+    fake.script("m-exec-backend", bare, wire("backend"));
+    fake.script("m-exec-frontend", wire("frontend"));
+    fake.script("m-exec-infra", wire("infra"));
+    fake.script("m-monitor", ROLLUP_MD);
+    fake.script("m-verifier", VERDICT_OK);
+
+    await planCmd([GOAL]);
+    await approveCmd(["--yes"]);
+    expect(await executeCmd([])).toBe(0);
+
+    const rp = meshPaths(root).round("r001");
+    const pair = rp.execPair("backend");
+    const report = (await safeRead(rp.report(pair, "backend")))!;
+    expect(report).not.toContain("Prose instead of wire");   // raw dump never published
+    expect(parseReport(report).status?.status).toBe("complete");
+    expect(fake.calls.filter((c) => c.model === "m-exec-backend")).toHaveLength(2);
+    expect(await safeRead(join(rp.workspace("backend"), "raw.md"))).toContain(
+      "Prose instead of wire",                                // tokens never lost
+    );
+    expect(await safeRead(join(rp.workspaceFiles("backend"), "src", "backend.ts"))).toBe(
+      'export const backend = "done";\n',
+    );
+    expect(await findParts(root)).toEqual([]);
+  });
+});

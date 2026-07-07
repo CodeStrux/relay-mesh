@@ -100,11 +100,23 @@ export async function loadProfiles(
   try {
     json = JSON.parse(raw);
   } catch (err) {
-    throw new Error(`${path}: not valid JSON — ${(err as Error).message}`);
+    throw new Error(
+      [
+        `${path}: not valid JSON — ${(err as Error).message}`,
+        "profiles.json defines the fleet and must parse before any command can run",
+        "fix the JSON syntax (a trailing comma is the usual culprit), then re-run",
+      ].join("\n"),
+    );
   }
   const parsed = fileSchema.safeParse(json);
   if (!parsed.success) {
-    throw new Error(`${path}: invalid profiles — ${formatIssues(parsed.error)}`);
+    throw new Error(
+      [
+        `${path}: invalid profiles — ${formatIssues(parsed.error)}`,
+        "the fleet must validate before any command can run",
+        "fix the listed fields in profiles.json, then re-run",
+      ].join("\n"),
+    );
   }
   return parsed.data.profiles;
 }

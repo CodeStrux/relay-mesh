@@ -1,15 +1,17 @@
 /** approve: the human gate — pin sha256(plan.md), then extract exec briefs deterministically. */
 import { createHash } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { hostname, userInfo } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { briefPreamble } from "../agents/execute.js";
 import { extractDomainBriefs } from "../agents/plan.js";
 import { loadConfig } from "../config.js";
 import { byRole, loadProfiles, type Profile } from "../profiles.js";
-import { atomicWrite, safeRead } from "../relay/fsio.js";
+import { atomicWrite, listVisible, safeRead } from "../relay/fsio.js";
 import { meshPaths, type RoundPaths } from "../relay/paths.js";
-import { deriveState } from "../relay/state.js";
+import { areaOf, deriveState } from "../relay/state.js";
 import { readPairRows } from "./status.js";
 
 function wordCount(text: string): number {
@@ -47,6 +49,24 @@ async function writeBriefs(
   return written;
 }
 
+/**
+ * A rejected → revised plan can drop a domain brief, orphaning an exec pair dir
+ * whose brief-only presence would wedge the phase machine at "executing" forever
+ * (no executor will ever report for it). Pairs holding any report file — even an
+ * in-flight one — are never touched.
+ */
+async function pruneStaleExecPairs(rp: RoundPaths, briefs: Map<string, string>): Promise<void> {
+  const execDir = join(rp.dir, "exec");
+  for (const name of await listVisible(execDir)) {
+    if (!name.includes("__")) continue;
+    const pairDir = join(execDir, name);
+    const files = await listVisible(pairDir);
+    if (briefs.has(areaOf(name, files, false))) continue;
+    if (files.some((f) => f.endsWith(".report.md"))) continue;
+    await rm(pairDir, { recursive: true, force: true });
+  }
+}
+
 export async function run(argv: string[]): Promise<number> {
   const { values } = parseArgs({
     args: argv,
@@ -74,6 +94,26 @@ export async function run(argv: string[]): Promise<number> {
   if (round === null) {
     throw new Error(
       ["no active round", `${root} has no rounds yet`, 'run: relay-mesh plan "<goal>"'].join("\n"),
+    );
+  }
+  // Rounds are append-only (protocol rule 5): approval only ever targets the
+  // round the phase machine is in, and never a round that already has a verdict.
+  if (round !== state.round) {
+    throw new Error(
+      [
+        `--round ${round} is not the active round (${state.round ?? "none"})`,
+        "rounds are append-only — nothing in a finished round is rewritten",
+        `work in ${state.round ?? "a new round"} instead (relay-mesh status shows the phase)`,
+      ].join("\n"),
+    );
+  }
+  if (state.verdict !== null) {
+    throw new Error(
+      [
+        `rounds/${round} already has a verdict — the round is terminal`,
+        "nothing in a terminal round is rewritten; fixes go in the next round",
+        "run verify to scaffold the next fix round, then approve that round",
+      ].join("\n"),
     );
   }
   const rp = meshPaths(root).round(round);
@@ -116,7 +156,7 @@ export async function run(argv: string[]): Promise<number> {
     const approval = { decision: "rejected", by, at, plan_sha256: planSha, notes: values.reject };
     await atomicWrite(rp.approval, `${JSON.stringify(approval)}\n`);
     console.log(`rejected — rounds/${round}/plan.approval.json written`);
-    return 0;
+    return 2; // replanning: the gate stays armed for a revised plan
   }
 
   // Idempotent short-circuit: already approved at this exact plan hash.
@@ -126,6 +166,7 @@ export async function run(argv: string[]): Promise<number> {
       const existing = JSON.parse(existingRaw) as { decision?: unknown; plan_sha256?: unknown };
       if (existing.decision === "approved" && existing.plan_sha256 === planSha) {
         await writeBriefs(rp, round, executors, briefs);
+        await pruneStaleExecPairs(rp, briefs);
         console.log("already approved at this plan hash — exec briefs are in place");
         console.log("next: relay-mesh execute");
         return 0;
@@ -148,6 +189,7 @@ export async function run(argv: string[]): Promise<number> {
   const approval = { decision: "approved", by, at, plan_sha256: planSha, notes: "" };
   await atomicWrite(rp.approval, `${JSON.stringify(approval)}\n`);
   const written = await writeBriefs(rp, round, executors, briefs);
+  await pruneStaleExecPairs(rp, briefs);
   console.log(`approved — ${written} exec brief(s) written`);
   console.log("next: relay-mesh execute");
   return 0;
