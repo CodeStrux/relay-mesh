@@ -3,6 +3,6 @@ dist/
 .env
 .env.*
 !.env.example
-relay/
+/relay/
 *.part
 .DS_Store
