@@ -241,6 +241,48 @@ describe("bundleForExecutor", () => {
     expect(b.text).not.toContain("PRIVATE_KEY_BLOB");
   });
 
+  it("does NOT inline a file inside a gitignored DIRECTORY (ancestor rule, not just the leaf)", async () => {
+    const root = await project();
+    await writeFile(join(root, ".gitignore"), "secrets/\n", "utf8");
+    await mkdir(join(root, "secrets", "nested"), { recursive: true });
+    await writeFile(join(root, "secrets", "service_account.json"), "DIR_IGNORED_SECRET_A\n", "utf8");
+    await writeFile(join(root, "secrets", "nested", "key.pem"), "DIR_IGNORED_SECRET_B\n", "utf8");
+
+    const b = await bundleForExecutor(root, ["secrets/service_account.json", "secrets/nested/key.pem"], CAPS);
+    expect(b.included).toEqual([]);
+    expect(b.text).not.toContain("DIR_IGNORED_SECRET_A");
+    expect(b.text).not.toContain("DIR_IGNORED_SECRET_B");
+  });
+
+  it("does NOT inline files under a SKIP_DIRS ancestor even with no .gitignore", async () => {
+    const root = await project();
+    await mkdir(join(root, "node_modules", "pkg"), { recursive: true });
+    await writeFile(join(root, "node_modules", "pkg", "index.js"), "VENDORED_BYTES\n", "utf8");
+
+    const b = await bundleForExecutor(root, ["node_modules/pkg/index.js"], CAPS);
+    expect(b.included).toEqual([]);
+    expect(b.text).not.toContain("VENDORED_BYTES");
+  });
+
+  it("refuses children of a directory literally named .env (any segment, not just the leaf)", async () => {
+    const root = await project();
+    await mkdir(join(root, ".env"), { recursive: true });
+    await writeFile(join(root, ".env", "production"), "AWS_SECRET_ACCESS_KEY=DOTENV_DIR_SECRET\n", "utf8");
+
+    const b = await bundleForExecutor(root, [".env/production"], CAPS);
+    expect(b.included).toEqual([]);
+    expect(b.text).not.toContain("DOTENV_DIR_SECRET");
+  });
+
+  it("still serves a legitimate source dotfile whose name only starts with .env (.environment.ts)", async () => {
+    const root = await project();
+    await writeFile(join(root, ".environment.ts"), "export const ENV_SOURCE_BODY = 1;\n", "utf8");
+
+    const b = await bundleForExecutor(root, [".environment.ts"], CAPS);
+    expect(b.included).toEqual([".environment.ts"]);
+    expect(b.text).toContain("ENV_SOURCE_BODY");
+  });
+
   it("prefers the EXACT on-disk path over a suffix match when the walk missed it", async () => {
     const root = await project();
     await mkdir(join(root, "src"), { recursive: true });

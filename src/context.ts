@@ -265,10 +265,17 @@ function normalizeHint(raw: string): string | null {
   return t;
 }
 
-/** Never serve VCS internals or env secrets, even on an exact hint (case-insensitive). */
+/**
+ * Never serve VCS internals or env secrets, even on an exact hint. Checks EVERY
+ * segment (case-insensitive): a `.git` or `.env`-family segment anywhere — a
+ * directory named `.env/` as much as a file `.env.local` — is refused. Source
+ * files that merely start with `.env` (`.environment.ts`) are NOT env secrets.
+ */
 function forbiddenHint(hint: string): boolean {
-  const segments = hint.toLowerCase().split("/");
-  return segments.includes(".git") || segments[segments.length - 1]!.startsWith(".env");
+  return hint
+    .toLowerCase()
+    .split("/")
+    .some((s) => s === ".git" || s === ".env" || s.startsWith(".env.") || s === ".envrc");
 }
 
 /**
@@ -382,6 +389,15 @@ async function safeDirect(
   if (relReal === "" || relReal.startsWith("..") || isAbsolute(relReal)) return null; // escaped root
   const canonical = relReal.split(sep).join("/");
   if (forbiddenHint(canonical)) return null;
+  // walk() prunes ignored/SKIP_DIRS directories during descent, so a file inside
+  // one never reaches recon; direct-stat bypasses the walk, so replicate that
+  // pruning against every ancestor — a rule like `secrets/` ignores its whole
+  // subtree, not just a leaf literally named `secrets`.
+  const parts = canonical.split("/");
+  for (let i = 1; i < parts.length; i++) {
+    if (SKIP_DIRS.has(parts[i - 1]!)) return null;
+    if (matchesIgnore(ignores, parts.slice(0, i).join("/"), true)) return null;
+  }
   let st;
   try {
     st = await stat(real);
