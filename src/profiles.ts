@@ -16,7 +16,11 @@ export interface Profile {
   prompt: string;
   multimodal: boolean;
   maxOutputTokens?: number;
+  template?: boolean; // an area-less executor persona the roster can mint new domains from
 }
+
+/** Reserved shard-suffix namespace (planner__<area>__w<i>) — never a real area/domain. */
+const RESERVED_AREA = /^w\d+$/;
 
 /** Resolves to <repo>/profiles.json from both src/ (vitest) and dist/ (built). */
 export const BUNDLED_PROFILES_PATH = fileURLToPath(
@@ -33,6 +37,7 @@ const profileSchema = z.object({
   prompt: z.string().min(1),
   multimodal: z.boolean().default(false),
   maxOutputTokens: z.number().int().positive().optional(),
+  template: z.boolean().optional(),
 });
 
 const fileSchema = z
@@ -67,13 +72,22 @@ const fileSchema = z
     const areas = new Set<string>();
     file.profiles.forEach((p, i) => {
       if (p.role !== "executor") return;
+      // A template executor supplies a persona for roster-minted domains; it has no area of its own.
+      if (p.template) return;
       if (!p.area) {
         ctx.addIssue({
           code: "custom",
-          message: `executor "${p.name}" must declare an area`,
+          message: `executor "${p.name}" must declare an area (or set template: true)`,
           path: ["profiles", i, "area"],
         });
         return;
+      }
+      if (RESERVED_AREA.test(p.area)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `executor area "${p.area}" is reserved (matches /^w\\d+$/, the shard-suffix namespace)`,
+          path: ["profiles", i, "area"],
+        });
       }
       if (areas.has(p.area)) {
         ctx.addIssue({

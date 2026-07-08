@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { type CallCtx, TIMEOUT_MS, callProfile } from "../src/agents/call.js";
 import { ApprovalMismatchError, briefPreamble, runExecute } from "../src/agents/execute.js";
 import { runRollup, startPoller } from "../src/agents/monitor.js";
-import { extractDomainBriefs, lintPlan, synthesizePlan } from "../src/agents/plan.js";
+import { lintPlan, synthesizePlan } from "../src/agents/plan.js";
+import { extractDomainBriefs } from "../src/relay/briefs.js";
+import { defaultRoster, expandRoster } from "../src/relay/roster.js";
 import { runRecon } from "../src/agents/recon.js";
 import { runVerify, scaffoldFixRound } from "../src/agents/verify.js";
 import type { Config } from "../src/config.js";
@@ -52,6 +54,12 @@ function prof(name: string, role: Role, area?: string): Profile {
 
 const RECON_PROFILES = RECON_AREAS.map((a) => prof(`recon-${a}`, "recon", a));
 const EXEC_PROFILES = EXEC_AREAS.map((a) => prof(`exec-${a}`, "executor", a));
+
+/** The count-1 default-roster workers for the round's plan.md — what execute now consumes. */
+async function execWorkers(dir: string, round: string) {
+  const planMd = (await safeRead(meshPaths(dir).round(round).plan))!;
+  return expandRoster(planMd, defaultRoster(planMd, EXEC_PROFILES), EXEC_PROFILES);
+}
 const PLANNER = prof("planner", "planner");
 const MONITOR = prof("monitor", "monitor");
 const VERIFIER = prof("verifier", "verifier");
@@ -84,6 +92,7 @@ async function setup(
     client: fake,
     config,
     round,
+    stage: "execute",
     usagePath: paths.usage,
     transcriptsDir: paths.round(round).transcriptsDir,
   };
@@ -284,7 +293,7 @@ describe("runExecute", () => {
     for (const a of RECON_AREAS) await addReconReport(dir, a);
     await addPlan(dir, { content: PLAN_OK });
     await addApproval(dir, { planSha256: "0".repeat(64) });
-    await expect(runExecute(ctx, EXEC_PROFILES, { root: dir, goal: "G" })).rejects.toThrow(
+    await expect(runExecute(ctx, await execWorkers(dir, ctx.round), { root: dir, goal: "G" })).rejects.toThrow(
       ApprovalMismatchError,
     );
   });
@@ -294,7 +303,7 @@ describe("runExecute", () => {
     await approvedRoot(dir);
     for (const a of EXEC_AREAS) fake.script(`M_EXEC_${a.toUpperCase()}`, wire(a));
 
-    await runExecute(ctx, EXEC_PROFILES, { root: dir, goal: "G" });
+    await runExecute(ctx, await execWorkers(dir, ctx.round), { root: dir, goal: "G" });
 
     const rp = paths.round("r001");
     for (const a of EXEC_AREAS) {
@@ -319,7 +328,7 @@ describe("runExecute", () => {
     await approvedRoot(dir);
     fake.script("M_EXEC_BACKEND", "total garbage", wire("backend"));
 
-    await runExecute(ctx, EXEC_PROFILES, { root: dir, goal: "G", areas: ["backend"] });
+    await runExecute(ctx, await execWorkers(dir, ctx.round), { root: dir, goal: "G", areas: ["backend"] });
 
     const calls = fake.calls.filter((c) => c.model === "M_EXEC_BACKEND");
     expect(calls).toHaveLength(2);
@@ -334,7 +343,7 @@ describe("runExecute", () => {
     await approvedRoot(dir);
     fake.script("M_EXEC_BACKEND", "garbage one", "garbage two");
 
-    await runExecute(ctx, EXEC_PROFILES, { root: dir, goal: "G", areas: ["backend"] });
+    await runExecute(ctx, await execWorkers(dir, ctx.round), { root: dir, goal: "G", areas: ["backend"] });
 
     const rp = paths.round("r001");
     expect(await safeRead(rp.raw("backend"))).toBe("garbage two");
@@ -350,7 +359,7 @@ describe("runExecute", () => {
     fake.script("M_EXEC_FRONTEND", wire("frontend"));
     fake.script("M_EXEC_INFRA", wire("infra"));
 
-    await runExecute(ctx, EXEC_PROFILES, { root: dir, goal: "G" });
+    await runExecute(ctx, await execWorkers(dir, ctx.round), { root: dir, goal: "G" });
 
     const rp = paths.round("r001");
     const backend = parseReport((await safeRead(rp.report(rp.execPair("backend"), "backend")))!);
@@ -378,7 +387,7 @@ describe("runExecute", () => {
     );
     fake.script("M_EXEC_BACKEND", wire("backend"));
 
-    await runExecute(ctx, EXEC_PROFILES, {
+    await runExecute(ctx, await execWorkers(dir, ctx.round), {
       root: dir,
       goal: "G",
       areas: ["backend"],
@@ -402,7 +411,7 @@ describe("runExecute", () => {
     await approvedRoot(dir);
     fake.script("M_EXEC_BACKEND", wire("backend"));
 
-    await runExecute(ctx, EXEC_PROFILES, { root: dir, goal: "G", areas: ["backend"] });
+    await runExecute(ctx, await execWorkers(dir, ctx.round), { root: dir, goal: "G", areas: ["backend"] });
 
     const text = textOf(fake.calls.find((c) => c.model === "M_EXEC_BACKEND")!);
     expect(text).toContain("## Source files (current contents)");
@@ -415,7 +424,7 @@ describe("runExecute", () => {
     await approvedRoot(dir);
     fake.script("M_EXEC_BACKEND", wire("backend"));
 
-    await runExecute(ctx, EXEC_PROFILES, {
+    await runExecute(ctx, await execWorkers(dir, ctx.round), {
       root: dir,
       goal: "G",
       areas: ["backend"],
@@ -453,7 +462,7 @@ describe("runExecute", () => {
     await writeFile(join(project, "src", "deep", "thing.ts"), "THING_BODY_MARKER\n", "utf8");
     fake.script("M_EXEC_BACKEND", wire("backend"));
 
-    await runExecute(ctx, EXEC_PROFILES, {
+    await runExecute(ctx, await execWorkers(dir, ctx.round), {
       root: dir,
       goal: "G",
       areas: ["backend"],
@@ -502,7 +511,7 @@ describe("runExecute", () => {
     await writeFile(join(project, "src", "db", "schema.ts"), "SCHEMA_CARRIED_MARKER\n", "utf8");
     fake.script("M_EXEC_BACKEND", wire("backend"));
 
-    await runExecute(ctx, EXEC_PROFILES, {
+    await runExecute(ctx, await execWorkers(dir, ctx.round), {
       root: dir,
       goal: "G",
       areas: ["backend"],
@@ -544,7 +553,7 @@ describe("runExecute", () => {
     await writeFile(join(project, "big.ts"), `BIG_FILE_MARKER\n${"z".repeat(250)}\n`, "utf8");
     fake.script("M_EXEC_BACKEND", wire("backend"));
 
-    await runExecute(ctx, EXEC_PROFILES, {
+    await runExecute(ctx, await execWorkers(dir, ctx.round), {
       root: dir,
       goal: "G",
       areas: ["backend"],
@@ -562,7 +571,7 @@ describe("runExecute", () => {
     await addExecReport(dir, "backend"); // terminal already
     fake.script("M_EXEC_FRONTEND", wire("frontend"));
 
-    await runExecute(ctx, EXEC_PROFILES, { root: dir, goal: "G", areas: ["backend", "frontend"] });
+    await runExecute(ctx, await execWorkers(dir, ctx.round), { root: dir, goal: "G", areas: ["backend", "frontend"] });
 
     expect(fake.calls.map((c) => c.model)).toEqual(["M_EXEC_FRONTEND"]);
     expect(await safeRead(paths.round("r001").report(paths.round("r001").execPair("infra"), "infra"))).toBeNull();

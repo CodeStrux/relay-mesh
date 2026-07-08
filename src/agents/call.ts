@@ -6,7 +6,7 @@ import type { LlmClient, LlmContentPart } from "../openrouter.js";
 import type { Profile, Role } from "../profiles.js";
 import { composePrompt } from "../prompts.js";
 import { atomicWrite } from "../relay/fsio.js";
-import { recordUsage } from "../usage.js";
+import { recordUsage, type Stage } from "../usage.js";
 
 /** Per-role LLM call timeouts (ms). */
 export const TIMEOUT_MS: Record<Role, number> = {
@@ -21,6 +21,7 @@ export interface CallCtx {
   client: LlmClient;
   config: Config;
   round: string;
+  stage: Stage;
   usagePath: string;
   transcriptsDir: string;
 }
@@ -91,6 +92,8 @@ export async function callProfile(
     model,
     in: result.usage.in,
     out: result.usage.out,
+    stage: ctx.stage,
+    domain: profile.domain,
   });
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");

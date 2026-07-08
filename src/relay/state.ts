@@ -10,6 +10,8 @@ export type Phase =
   | "synthesis"
   | "awaiting-approval"
   | "replanning"
+  | "awaiting-roster"
+  | "roster-revising"
   | "executing"
   | "rollup"
   | "verifying"
@@ -32,6 +34,8 @@ export interface RunState {
   exec: PairState[];
   approval: { decision: "approved" | "rejected"; planSha256: string } | null;
   planSha256: string | null;
+  rosterSha256: string | null;
+  rosterApproval: { decision: "approved" | "rejected"; rosterSha256: string } | null;
   verdict: { satisfied: boolean } | null;
 }
 
@@ -49,7 +53,9 @@ export function areaOf(pairName: string, files: string[], recon: boolean): strin
   if (brief) return brief.slice(0, -".brief.md".length);
   const report = files.find((f) => f.endsWith(".report.md"));
   if (report) return report.slice(0, -".report.md".length);
-  const tail = pairName.replace(/^.*__/, "");
+  // Tail fallback (the mkdir→brief window): drop the shard suffix (planner__<area>__w<i>),
+  // then the sender prefix. The /^w\d+$/ namespace is reserved so the strip is unambiguous.
+  const tail = pairName.replace(/__w\d+$/, "").replace(/^.*__/, "");
   return recon ? tail.replace(/^recon-/, "") : tail;
 }
 
@@ -94,6 +100,22 @@ async function readApproval(
   return null;
 }
 
+async function readRosterApproval(
+  path: string,
+): Promise<{ decision: "approved" | "rejected"; rosterSha256: string } | null> {
+  const raw = await safeRead(path);
+  if (raw === null) return null;
+  try {
+    const j = JSON.parse(raw) as { decision?: unknown; roster_sha256?: unknown };
+    if ((j.decision === "approved" || j.decision === "rejected") && typeof j.roster_sha256 === "string") {
+      return { decision: j.decision, rosterSha256: j.roster_sha256 };
+    }
+  } catch {
+    // unparseable => treat as absent
+  }
+  return null;
+}
+
 async function readVerdict(path: string): Promise<{ satisfied: boolean } | null> {
   const raw = await safeRead(path);
   if (raw === null) return null;
@@ -113,6 +135,9 @@ async function roundState(paths: MeshPaths, r: string): Promise<RunState> {
   const planMd = await safeRead(rp.plan);
   const planSha256 = planMd === null ? null : sha256(planMd);
   const approval = await readApproval(rp.approval);
+  const rosterRaw = await safeRead(rp.roster);
+  const rosterSha256 = rosterRaw === null ? null : sha256(rosterRaw);
+  const rosterApproval = await readRosterApproval(rp.rosterApproval);
   const verdict = await readVerdict(rp.verdictJson);
   const rollup = await safeRead(rp.rollup);
 
@@ -124,14 +149,38 @@ async function roundState(paths: MeshPaths, r: string): Promise<RunState> {
     if (planMd === null) return "synthesis";
     if (approval === null) return "awaiting-approval";
     if (approval.decision === "rejected") return "replanning";
-    if (approval.planSha256 === planSha256 && !execDone) return "executing";
+    // Reaching "executing" now requires BOTH gates current: an edit to plan.md OR
+    // roster.json drops the sha match and sends the round back to its gate.
+    const planApproved = approval.decision === "approved" && approval.planSha256 === planSha256;
+    if (planApproved && !execDone) {
+      const rosterApproved =
+        rosterApproval !== null &&
+        rosterApproval.decision === "approved" &&
+        rosterSha256 !== null &&
+        rosterApproval.rosterSha256 === rosterSha256;
+      if (!rosterApproved) {
+        return rosterApproval?.decision === "rejected" ? "roster-revising" : "awaiting-roster";
+      }
+      return "executing";
+    }
     if (execDone && rollup === null) return "rollup";
     if (rollup !== null && verdict === null) return "verifying";
     if (verdict?.satisfied === true) return "done";
     return "fix-planning";
   })();
 
-  return { root: paths.root, round: r, phase, recon, exec, approval, planSha256, verdict };
+  return {
+    root: paths.root,
+    round: r,
+    phase,
+    recon,
+    exec,
+    approval,
+    planSha256,
+    rosterSha256,
+    rosterApproval,
+    verdict,
+  };
 }
 
 /** Pure function of the filesystem — the phase machine table in docs/protocol.md. */
@@ -145,6 +194,8 @@ export async function deriveState(root: string): Promise<RunState> {
     exec: [],
     approval: null,
     planSha256: null,
+    rosterSha256: null,
+    rosterApproval: null,
     verdict: null,
   };
 

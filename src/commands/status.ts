@@ -77,6 +77,10 @@ export function nextCommand(state: RunState): string {
       return "relay-mesh approve";
     case "replanning":
       return `revise rounds/${state.round}/plan.md, then relay-mesh approve`;
+    case "awaiting-roster":
+      return "relay-mesh roster";
+    case "roster-revising":
+      return `revise rounds/${state.round}/roster.json, then relay-mesh roster`;
     case "executing":
     case "rollup":
       return "relay-mesh execute";

@@ -12,6 +12,7 @@ import { byRole, loadProfiles } from "../profiles.js";
 import { atomicWrite, listVisible, safeRead } from "../relay/fsio.js";
 import { meshPaths, nextRound } from "../relay/paths.js";
 import { deriveState } from "../relay/state.js";
+import { makeResolver, readUsage, writeStageRollup } from "../usage.js";
 import { nextCommand, readPairRows } from "./status.js";
 
 const ATTACH_HEADING = "\n\n## Attachments\n";
@@ -227,6 +228,7 @@ export async function run(argv: string[]): Promise<number> {
     client,
     config,
     round,
+    stage: "recon",
     usagePath: paths.usage,
     transcriptsDir: paths.round(round).transcriptsDir,
   };
@@ -243,6 +245,19 @@ export async function run(argv: string[]): Promise<number> {
     console.log(`blocked recon pairs (held for operator attention): ${blocked.join(", ")}`);
   }
   console.log("next: relay-mesh approve");
+  // Per-domain usage for the recon+synthesis stage. Non-authoritative: the exit
+  // code is decided above; a failed roll-up warns and never changes it.
+  try {
+    await writeStageRollup(
+      paths.round(round).usageStage("recon"),
+      await readUsage(paths.usage),
+      "recon",
+      round,
+      makeResolver(profiles),
+    );
+  } catch (err) {
+    console.log(`warning: usage roll-up not written: ${String(err)}`);
+  }
   // Blocked outcomes are first-class and exit 3 across all commands (protocol exit table).
   return blocked.length ? 3 : 0;
 }

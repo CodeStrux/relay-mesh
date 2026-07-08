@@ -11,6 +11,7 @@ import { ApprovalMismatchError } from "../src/agents/execute.js";
 import { run as approveCmd } from "../src/commands/approve.js";
 import { run as executeCmd } from "../src/commands/execute.js";
 import { run as planCmd } from "../src/commands/plan.js";
+import { run as rosterCmd } from "../src/commands/roster.js";
 import { run as statusCmd } from "../src/commands/status.js";
 import { run as verifyCmd } from "../src/commands/verify.js";
 import type { LlmClient } from "../src/openrouter.js";
@@ -93,6 +94,27 @@ const PLAN_MD = [
   "## Domain brief: infra",
   "",
   "1. Provision the box.",
+  "",
+].join("\n");
+
+const PLAN_WITH_DOCS = [
+  "# Plan",
+  "",
+  "## Domain brief: backend",
+  "",
+  "1. Build the API.",
+  "",
+  "## Domain brief: frontend",
+  "",
+  "1. Build the UI.",
+  "",
+  "## Domain brief: infra",
+  "",
+  "1. Provision the box.",
+  "",
+  "## Domain brief: docs",
+  "",
+  "1. Write the README.",
   "",
 ].join("\n");
 
@@ -218,10 +240,14 @@ describe("orchestrator full loop", () => {
     expect(await findParts(root)).toEqual([]);
 
     expect(await approveCmd(["--yes"])).toBe(0);
+    expect((await deriveState(root)).phase).toBe("awaiting-roster");
+    expect(await findParts(root)).toEqual([]);
+
+    // Gate #2: the roster authors the exec briefs deterministically (no LLM).
+    expect(await rosterCmd(["--yes"])).toBe(0);
     expect((await deriveState(root)).phase).toBe("executing");
     expect(await findParts(root)).toEqual([]);
 
-    // Exec briefs were extracted deterministically from the approved plan.
     const rp = meshPaths(root).round("r001");
     const brief = (await safeRead(rp.brief(rp.execPair("backend"), "backend")))!;
     expect(brief).toContain("# Execution brief: backend — round r001");
@@ -254,13 +280,22 @@ describe("orchestrator full loop", () => {
         "recon-frontend",
         "recon-business",
         "planner",
-        "exec-backend",
-        "exec-frontend",
-        "exec-infra",
+        "backend",
+        "frontend",
+        "infra",
         "monitor",
         "verifier",
       ]),
     );
+
+    // Per-domain token-usage JSON at each stage boundary (rounds/r001/usage/<stage>.json).
+    const reconUsage = JSON.parse((await safeRead(rp.usageStage("recon")))!);
+    expect(reconUsage.stage).toBe("recon");
+    expect(reconUsage.byDomain.some((d: { domain: string }) => d.domain === "planning")).toBe(true);
+    const execUsage = JSON.parse((await safeRead(rp.usageStage("execute")))!);
+    const execDomains = new Set(execUsage.byDomain.map((d: { domain: string }) => d.domain));
+    for (const a of ["backend", "frontend", "infra"]) expect(execDomains.has(a)).toBe(true);
+    expect(JSON.parse((await safeRead(rp.usageStage("verify")))!).stage).toBe("verify");
   });
 
   it("refuses to execute when plan.md was edited after approval (exit 1)", async () => {
@@ -290,6 +325,7 @@ describe("orchestrator full loop", () => {
 
     expect(await planCmd([GOAL])).toBe(0);
     expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await rosterCmd(["--yes"])).toBe(0);
     expect(await executeCmd([])).toBe(3);
 
     const rp = meshPaths(root).round("r001");
@@ -320,6 +356,7 @@ describe("orchestrator full loop", () => {
 
     expect(await planCmd([GOAL])).toBe(0);
     expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await rosterCmd(["--yes"])).toBe(0);
     expect(await executeCmd([])).toBe(0);
     expect(await verifyCmd([])).toBe(2); // gaps → awaiting a human at the new gate
 
@@ -329,6 +366,7 @@ describe("orchestrator full loop", () => {
     expect(await safeRead(meshPaths(root).round("r002").plan)).toBe(FIX_PLAN_MD);
 
     expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await rosterCmd(["--yes"])).toBe(0);
     expect(await executeCmd([])).toBe(0);
     // Only the gap area re-ran; the fix executor saw the prior round's outcome.
     expect(fake.calls.filter((c) => c.model === "m-exec-frontend")).toHaveLength(1);
@@ -358,6 +396,7 @@ describe("orchestrator full loop", () => {
 
     expect(await planCmd([GOAL])).toBe(0);
     expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await rosterCmd(["--yes"])).toBe(0);
     expect(await executeCmd([])).toBe(0);
     expect(await verifyCmd([])).toBe(2);
 
@@ -386,6 +425,7 @@ describe("review-confirmed edges", () => {
       "utf8",
     );
     expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await rosterCmd(["--yes"])).toBe(0);
 
     fake.script("m-exec-frontend", wire("frontend"));
     fake.script("m-exec-infra", wire("infra"));
@@ -410,6 +450,7 @@ describe("review-confirmed edges", () => {
     fake.script("m-verifier", VERDICT_OK);
     await planCmd([GOAL]);
     await approveCmd(["--yes"]);
+    await rosterCmd(["--yes"]);
     await executeCmd([]);
     await verifyCmd([]);
     expect((await deriveState(root)).phase).toBe("done");
@@ -438,6 +479,7 @@ describe("review-confirmed edges", () => {
     expect(typeof record.host).toBe("string");
 
     expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await rosterCmd(["--yes"])).toBe(0);
     expect(await executeCmd([])).toBe(0);
     const backendCall = fake.calls.find((c) => c.model === "m-exec-backend")!;
     expect(callText(backendCall)).toContain("## Source files (current contents)");
@@ -463,6 +505,7 @@ describe("review-confirmed edges", () => {
 
     expect(await planCmd([GOAL, "--project", projA])).toBe(0);
     expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await rosterCmd(["--yes"])).toBe(0);
     expect(await executeCmd(["--project", projB])).toBe(0);
 
     const backendCall = fake.calls.find((c) => c.model === "m-exec-backend")!;
@@ -482,6 +525,7 @@ describe("review-confirmed edges", () => {
 
     expect(await planCmd([GOAL, "--project", proj])).toBe(0);
     expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await rosterCmd(["--yes"])).toBe(0);
     await rm(proj, { recursive: true, force: true });
     expect(await executeCmd([])).toBe(0);
 
@@ -507,6 +551,7 @@ describe("review-confirmed edges", () => {
 
     expect(await planCmd([GOAL])).toBe(0);
     expect(await approveCmd(["--yes"])).toBe(0);
+    expect(await rosterCmd(["--yes"])).toBe(0);
     expect(await executeCmd([])).toBe(0); // r001 terminal, backend report + workspace exist
 
     const rp = meshPaths(root).round("r001");
@@ -551,6 +596,7 @@ describe("review-confirmed edges", () => {
 
     await planCmd([GOAL]);
     await approveCmd(["--yes"]);
+    await rosterCmd(["--yes"]);
     expect(await executeCmd([])).toBe(0);
 
     const rp = meshPaths(root).round("r001");
@@ -565,6 +611,72 @@ describe("review-confirmed edges", () => {
     expect(await safeRead(join(rp.workspaceFiles("backend"), "src", "backend.ts"))).toBe(
       'export const backend = "done";\n',
     );
+    expect(await findParts(root)).toEqual([]);
+  });
+});
+
+describe("dynamic roster growth", () => {
+  it("shards a domain and mints a new one from a template; all execute with per-pair closures", async () => {
+    scriptRecon();
+    fake.script("m-planner", PLAN_WITH_DOCS);
+    fake.script("m-exec-backend", wire("backend"), wire("backend")); // two shards
+    fake.script("m-exec-frontend", wire("frontend"), wire("docs")); // frontend + minted docs (exec-frontend template)
+    fake.script("m-exec-infra", wire("infra"));
+    fake.script("m-monitor", ROLLUP_MD);
+
+    expect(await planCmd([GOAL])).toBe(0);
+    expect(await approveCmd(["--yes"])).toBe(0);
+    expect((await deriveState(root)).phase).toBe("awaiting-roster");
+
+    // The advisor authors roster.json before the gate: backend×2 shards + a minted "docs" domain.
+    const rp = meshPaths(root).round("r001");
+    const roster = {
+      version: 1,
+      execute: [
+        { domain: "backend", template: "exec-backend", count: 2, modelEnv: "RM_TEST_EXEC_BACKEND", effort: "low" },
+        { domain: "frontend", template: "exec-frontend", count: 1, modelEnv: "RM_TEST_EXEC_FRONTEND", effort: "low" },
+        { domain: "infra", template: "exec-infra", count: 1, modelEnv: "RM_TEST_EXEC_INFRA", effort: "low" },
+        { domain: "docs", template: "exec-frontend", count: 1, modelEnv: "RM_TEST_EXEC_FRONTEND", effort: "low" },
+      ],
+    };
+    await writeFile(rp.roster, `${JSON.stringify(roster, null, 2)}\n`, "utf8");
+
+    expect(await rosterCmd(["--yes"])).toBe(0);
+    expect((await deriveState(root)).phase).toBe("executing");
+    expect(await executeCmd([])).toBe(0);
+    expect((await deriveState(root)).phase).toBe("verifying");
+
+    // Five worker pairs: two backend shards + frontend + infra + the minted docs.
+    const execPairs = (await listVisible(join(rp.dir, "exec"))).sort();
+    expect(execPairs).toEqual([
+      "planner__backend__w1",
+      "planner__backend__w2",
+      "planner__docs",
+      "planner__frontend",
+      "planner__infra",
+    ]);
+
+    // Each pair holds a complete report and a byte-parity closure (pct 100).
+    for (const pair of execPairs) {
+      const dir = join(rp.dir, "exec", pair);
+      const files = await listVisible(dir);
+      const area = files.find((f) => f.endsWith(".report.md"))!.slice(0, -".report.md".length);
+      expect(parseReport((await safeRead(join(dir, `${area}.report.md`)))!).status?.status).toBe("complete");
+      expect(JSON.parse((await safeRead(join(dir, "closure.json")))!).totals.pct).toBe(100);
+    }
+
+    // Sharded workspaces are structurally disjoint (single-writer per shard).
+    for (const shard of [1, 2]) {
+      expect(await safeRead(join(rp.workspaceFiles("backend", shard), "src", "backend.ts"))).toBe(
+        'export const backend = "done";\n',
+      );
+    }
+
+    // Each shard is its own worker in usage; the minted domain ran too.
+    const profiles = new Set((await readUsage(meshPaths(root).usage)).map((u) => u.profile));
+    expect(profiles.has("backend__w1")).toBe(true);
+    expect(profiles.has("backend__w2")).toBe(true);
+    expect(profiles.has("docs")).toBe(true);
     expect(await findParts(root)).toEqual([]);
   });
 });

@@ -8,6 +8,7 @@ import { byRole, loadProfiles } from "../profiles.js";
 import { safeRead } from "../relay/fsio.js";
 import { meshPaths } from "../relay/paths.js";
 import { deriveState } from "../relay/state.js";
+import { makeResolver, readUsage, writeStageRollup } from "../usage.js";
 import { readGoal } from "./plan.js";
 import { readPairRows } from "./status.js";
 
@@ -86,6 +87,7 @@ export async function run(argv: string[]): Promise<number> {
     client,
     config,
     round,
+    stage: "verify",
     usagePath: paths.usage,
     transcriptsDir: rp.transcriptsDir,
   };
@@ -102,6 +104,13 @@ export async function run(argv: string[]): Promise<number> {
     (r) => r.kind === "exec" && r.block?.status === "blocked",
   );
 
+  // Per-domain usage for the verify stage (non-authoritative — warn, never fail).
+  try {
+    await writeStageRollup(rp.usageStage("verify"), await readUsage(paths.usage), "verify", round, makeResolver(profiles));
+  } catch (err) {
+    console.log(`warning: usage roll-up not written: ${String(err)}`);
+  }
+
   if (verdict.satisfied) {
     console.log("verdict: satisfied — the outcome matches the goal");
     if (blocked) console.log("blocked exec pairs remain held for operator attention");
@@ -115,6 +124,12 @@ export async function run(argv: string[]): Promise<number> {
     const next = await scaffoldFixRound(ctx, byRole(profiles, "planner")[0]!, { root, goal });
     console.log(`fix round scaffolded: rounds/${next}/plan.md`);
     console.log(`next: relay-mesh approve --round ${next}`);
+    // The scaffold planner spend is stamped stage "recon" in the NEXT round.
+    try {
+      await writeStageRollup(paths.round(next).usageStage("recon"), await readUsage(paths.usage), "recon", next, makeResolver(profiles));
+    } catch (err) {
+      console.log(`warning: usage roll-up not written: ${String(err)}`);
+    }
   } else {
     console.log(`max fix rounds reached (MAX_FIX_ROUNDS=${config.maxFixRounds}) — no fix round scaffolded`);
   }

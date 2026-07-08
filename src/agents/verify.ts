@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Profile } from "../profiles.js";
 import { atomicWrite, listVisible, safeRead } from "../relay/fsio.js";
 import { meshPaths } from "../relay/paths.js";
+import { areaOf } from "../relay/state.js";
 import { callProfile, type CallCtx } from "./call.js";
 import { listFilesRecursive, workspaceListing } from "./execute.js";
 import { findLatestReconReport } from "./recon.js";
@@ -98,11 +99,12 @@ export async function runVerify(
   const execDir = join(rp.dir, "exec");
   for (const pair of await listVisible(execDir)) {
     if (!pair.includes("__")) continue;
-    const area = pair.replace(/^.*__/, "");
+    const files = await listVisible(join(execDir, pair));
+    const area = areaOf(pair, files, false); // shard-aware (planner__<area>__w<i> → <area>)
     const report = await safeRead(join(execDir, pair, `${area}.report.md`));
     const closure = await safeRead(join(execDir, pair, "closure.json"));
     sections.push(
-      `## Executor report: ${area}\n\n${report ?? "(no report)"}\n\n### closure.json\n\n${closure ?? "(missing)"}`,
+      `## Executor report: ${pair} (${area})\n\n${report ?? "(no report)"}\n\n### closure.json\n\n${closure ?? "(missing)"}`,
     );
   }
   sections.push(`## Monitor roll-up\n\n${(await safeRead(rp.rollup)) ?? "(missing)"}`);
@@ -209,7 +211,7 @@ export async function scaffoldFixRound(
     `## Prior workspace listing (round ${ctx.round})\n\n${await workspaceListing(args.root, ctx.round)}`,
   ].join("\n\n");
 
-  const fixCtx: CallCtx = { ...ctx, round: next, transcriptsDir: nextRp.transcriptsDir };
+  const fixCtx: CallCtx = { ...ctx, round: next, stage: "recon", transcriptsDir: nextRp.transcriptsDir };
   await callProfile(fixCtx, planner, [{ type: "text", text }], nextRp.plan, {
     GOAL: args.goal,
     ROUND: next,

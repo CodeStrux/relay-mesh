@@ -3,40 +3,10 @@ import { join } from "node:path";
 import type { Profile } from "../profiles.js";
 import { atomicWrite, listVisible, safeRead } from "../relay/fsio.js";
 import { meshPaths } from "../relay/paths.js";
+import { extractDomainBriefs } from "../relay/briefs.js";
 import { callProfile, type CallCtx } from "./call.js";
 
-const BRIEF_HEADING = /^##\s+Domain brief:\s*(.+?)\s*$/;
 const MAX_BRIEF_WORDS = 900;
-
-/**
- * Deterministic, verbatim extraction of "## Domain brief: <area>" sections
- * (heading line through the line before the next level-2 heading). This is the
- * only path from approved plan to execution briefs — no LLM in between.
- */
-export function extractDomainBriefs(planMd: string): Map<string, string> {
-  const lines = planMd.split("\n");
-  const briefs = new Map<string, string>();
-  let area: string | null = null;
-  let start = 0;
-  const flush = (end: number): void => {
-    if (area !== null) briefs.set(area, lines.slice(start, end).join("\n"));
-  };
-  for (let i = 0; i < lines.length; i++) {
-    const m = BRIEF_HEADING.exec(lines[i]!);
-    if (m) {
-      flush(i);
-      area = m[1]!;
-      start = i;
-      continue;
-    }
-    if (area !== null && /^##\s/.test(lines[i]!)) {
-      flush(i);
-      area = null;
-    }
-  }
-  flush(lines.length);
-  return briefs;
-}
 
 function wordCount(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;

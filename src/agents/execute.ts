@@ -2,15 +2,14 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { bundleForExecutor, extractPathHints } from "../context.js";
-import type { Profile } from "../profiles.js";
 import { extractArtifacts, writeArtifacts } from "../relay/artifacts.js";
 import { rollupPair } from "../relay/closure.js";
 import { atomicWrite, listVisible, safeRead } from "../relay/fsio.js";
 import { meshPaths } from "../relay/paths.js";
 import { parseReport, serializeStatusBlock } from "../relay/report.js";
+import type { WorkerSpec } from "../relay/roster.js";
 import { deriveState } from "../relay/state.js";
 import { callProfile, type CallCtx } from "./call.js";
-import { extractDomainBriefs } from "./plan.js";
 import { findLatestReconReport } from "./recon.js";
 
 /** Plan edited after approval — commands map this to exit 1. */
@@ -24,6 +23,20 @@ export class ApprovalMismatchError extends Error {
       ].join("\n"),
     );
     this.name = "ApprovalMismatchError";
+  }
+}
+
+/** Roster edited after approval — commands map this to exit 1. */
+export class RosterMismatchError extends Error {
+  constructor(round: string) {
+    super(
+      [
+        `roster.approval.json for ${round} pins a different sha256 than the current roster.json`,
+        "the roster was edited after approval, so the approved fleet can no longer be trusted",
+        "re-approve the roster (roster command), then run execute again",
+      ].join("\n"),
+    );
+    this.name = "RosterMismatchError";
   }
 }
 
@@ -49,10 +62,11 @@ export async function workspaceListing(root: string, round: string): Promise<str
 }
 
 /** Fixed protocol preamble prepended to every verbatim domain brief. */
-export function briefPreamble(area: string, round: string): string {
-  return `# Execution brief: ${area} — round ${round}
+export function briefPreamble(area: string, round: string, shard?: number): string {
+  const pair = shard === undefined ? `planner__${area}` : `planner__${area}__w${shard}`;
+  return `# Execution brief: ${area} — round ${round}${shard === undefined ? "" : ` (shard ${shard})`}
 
-Report to: \`rounds/${round}/exec/planner__${area}/${area}.report.md\`
+Report to: \`rounds/${round}/exec/${pair}/${area}.report.md\`
 
 Your report MUST open with this exact status block — first line \`---\`, flat \`key: value\` lines, closed by \`---\`:
 
@@ -81,7 +95,9 @@ function synthPartialReport(
   planRef: string,
   round: string,
   problems: string[],
+  shard?: number,
 ): string {
+  const rawPath = `rounds/${round}/workspace/${area}${shard === undefined ? "" : `/w${shard}`}/raw.md`;
   return (
     serializeStatusBlock({
       area,
@@ -90,7 +106,7 @@ function synthPartialReport(
       steps_total: 0,
       plan_ref: planRef,
     }) +
-    `\nExecutor output failed to parse cleanly after one corrective re-prompt; the verbatim output is preserved at rounds/${round}/workspace/${area}/raw.md.\n\nParse problems:\n${problems.map((p) => `- ${p}`).join("\n")}\n`
+    `\nExecutor output failed to parse cleanly after one corrective re-prompt; the verbatim output is preserved at ${rawPath}.\n\nParse problems:\n${problems.map((p) => `- ${p}`).join("\n")}\n`
   );
 }
 
@@ -185,15 +201,16 @@ async function priorRoundContext(
 }
 
 /**
- * Verify the approval hash, extract domain briefs verbatim, then run every
- * executor whose area has a brief (optionally filtered by areas) in parallel.
- * Malformed output earns ONE corrective re-prompt, then raw.md salvage with a
- * synthesized partial report; a rejected call becomes a blocked report.
- * Pairs with a parseable report are skipped (resume). Closure rolls per pair.
+ * Verify the approval hash, then run every roster-expanded worker (optionally
+ * filtered by areas) in parallel. Each worker mints its brief from the pinned
+ * roster's verbatim domain brief. Malformed output earns ONE corrective
+ * re-prompt, then raw.md salvage with a synthesized partial report; a rejected
+ * call becomes a blocked report. Pairs with a parseable report are skipped
+ * (resume). Closure rolls per pair.
  */
 export async function runExecute(
   ctx: CallCtx,
-  executorProfiles: Profile[],
+  workers: WorkerSpec[],
   args: { root: string; goal: string; areas?: string[]; project?: ProjectRef },
 ): Promise<void> {
   const rp = meshPaths(args.root).round(ctx.round);
@@ -202,8 +219,8 @@ export async function runExecute(
     throw new Error(
       [
         `rounds/${ctx.round}/plan.md not found`,
-        "execute extracts its briefs from an approved plan",
-        "run plan and approve first",
+        "execute runs the fleet the roster gate approved",
+        "run plan, approve, and roster first",
       ].join("\n"),
     );
   }
@@ -213,18 +230,14 @@ export async function runExecute(
     throw new Error(
       [
         `no approval for rounds/${ctx.round}/plan.md`,
-        "execute only runs briefs extracted from an approved plan",
+        "execute only runs an approved plan",
         "run the approve command first",
       ].join("\n"),
     );
   }
   if (state.approval.planSha256 !== state.planSha256) throw new ApprovalMismatchError(ctx.round);
 
-  const briefs = extractDomainBriefs(planMd);
-  const targets = executorProfiles.filter(
-    (p): p is Profile & { area: string } =>
-      p.area !== undefined && briefs.has(p.area) && (!args.areas || args.areas.includes(p.area)),
-  );
+  const targets = workers.filter((w) => !args.areas || args.areas.includes(w.area));
   const prior = await priorRoundContext(args.root, ctx.round);
 
   // A recorded path may not exist on this box (multi-machine runs): degrade to
@@ -243,9 +256,10 @@ export async function runExecute(
   const caps = { perFileBytes: ctx.config.execFileBytes, totalBytes: ctx.config.execBundleBytes };
 
   const results = await Promise.allSettled(
-    targets.map(async (profile) => {
-      const area = profile.area;
-      const pairDir = rp.execPair(area);
+    targets.map(async (w) => {
+      const area = w.area;
+      const shard = w.shardCount === 1 ? undefined : w.shardIndex;
+      const pairDir = rp.execPair(area, shard);
       const reportPath = rp.report(pairDir, area);
       const planRef = `rounds/${ctx.round}/plan.md`;
 
@@ -256,7 +270,7 @@ export async function runExecute(
         return;
       }
 
-      const brief = briefPreamble(area, ctx.round) + briefs.get(area)! + "\n";
+      const brief = briefPreamble(area, ctx.round, shard) + w.briefBody + "\n";
       await atomicWrite(rp.brief(pairDir, area), brief);
 
       const recon = await findLatestReconReport(args.root, area);
@@ -283,7 +297,7 @@ export async function runExecute(
         GOAL: args.goal,
         ROUND: ctx.round,
         AREA: area,
-        REPORT_PATH: `rounds/${ctx.round}/exec/planner__${area}/${area}.report.md`,
+        REPORT_PATH: `rounds/${ctx.round}/exec/${w.pairName}/${area}.report.md`,
       };
 
       try {
@@ -293,7 +307,7 @@ export async function runExecute(
         // real report lands below (publish: false).
         let output = await callProfile(
           ctx,
-          profile,
+          w.profile,
           [{ type: "text", text: sections.join("\n\n") }],
           reportPath,
           vars,
@@ -306,7 +320,7 @@ export async function runExecute(
           // Salvage the first attempt before re-prompting: its parsed FILE
           // blocks land in the workspace and raw.md keeps the verbatim text,
           // so a report-only corrective answer never loses tokens.
-          await writeArtifacts(res, rp.workspace(area), output);
+          await writeArtifacts(res, rp.workspace(area, shard), output);
           const corrective = [
             sections.join("\n\n"),
             "## Correction required",
@@ -315,7 +329,7 @@ export async function runExecute(
           ].join("\n\n");
           output = await callProfile(
             ctx,
-            profile,
+            w.profile,
             [{ type: "text", text: corrective }],
             reportPath,
             vars,
@@ -323,12 +337,12 @@ export async function runExecute(
           );
           res = extractArtifacts(output);
         }
-        await writeArtifacts(res, rp.workspace(area), output);
+        await writeArtifacts(res, rp.workspace(area, shard), output);
         await atomicWrite(
           reportPath,
           res.reportMd !== null && res.problems.length === 0
             ? res.reportMd
-            : synthPartialReport(area, planRef, ctx.round, res.problems),
+            : synthPartialReport(area, planRef, ctx.round, res.problems, shard),
         );
       } catch (err) {
         await atomicWrite(reportPath, synthBlockedReport(area, planRef, err));

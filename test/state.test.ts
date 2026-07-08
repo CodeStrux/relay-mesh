@@ -11,6 +11,7 @@ import {
   addPlan,
   addReconReport,
   addRollup,
+  addRoster,
   addRound,
   addVerdict,
   makeRoot,
@@ -116,6 +117,38 @@ describe("deriveState phase machine", () => {
     const s = await deriveState(d);
     expect(s.phase).toBe("replanning");
     expect(s.approval?.decision).toBe("rejected");
+  });
+
+  it("awaiting-roster: plan approved but no roster yet", async () => {
+    const d = await root();
+    await makeRoot(d);
+    await allRecon(d);
+    await addPlan(d);
+    await addApproval(d, { roster: false });
+    const s = await deriveState(d);
+    expect(s.phase).toBe("awaiting-roster");
+    expect(s.rosterApproval).toBeNull();
+  });
+
+  it("roster-revising: roster approval decision == rejected", async () => {
+    const d = await root();
+    await makeRoot(d);
+    await allRecon(d);
+    await addPlan(d);
+    await addApproval(d, { roster: false });
+    await addRoster(d, { decision: "rejected" });
+    const s = await deriveState(d);
+    expect(s.phase).toBe("roster-revising");
+  });
+
+  it("stale roster (approval sha no longer matches roster.json) drops back to awaiting-roster", async () => {
+    const d = await root();
+    await makeRoot(d);
+    await allRecon(d);
+    await addPlan(d);
+    await addApproval(d, { roster: false });
+    await addRoster(d, { rosterSha256: "0".repeat(64) }); // approved, but pins a different sha
+    expect((await deriveState(d)).phase).toBe("awaiting-roster");
   });
 
   it("executing: approved with matching sha, exec briefs laid, no reports", async () => {

@@ -4,18 +4,22 @@ export interface RoundPaths {
   dir: string;
   plan: string;
   approval: string;
+  roster: string;
+  rosterApproval: string;
   reconPair(profileName: string): string;
-  execPair(area: string): string;
+  execPair(area: string, shard?: number): string;
   brief(pairDir: string, area: string): string;
   report(pairDir: string, area: string): string;
   closure(pairDir: string): string;
-  workspace(area: string): string;
-  workspaceFiles(area: string): string;
-  raw(area: string): string;
+  workspace(area: string, shard?: number): string;
+  workspaceFiles(area: string, shard?: number): string;
+  raw(area: string, shard?: number): string;
   eventsNdjson: string;
   rollup: string;
   verdictJson: string;
   verdictMd: string;
+  usageDir: string;
+  usageStage(stage: string): string;
   transcriptsDir: string;
 }
 
@@ -47,18 +51,26 @@ export function meshPaths(root: string): MeshPaths {
         dir,
         plan: join(dir, "plan.md"),
         approval: join(dir, "plan.approval.json"),
+        roster: join(dir, "roster.json"),
+        rosterApproval: join(dir, "roster.approval.json"),
         reconPair: (profileName) => join(dir, "recon", `planner__${profileName}`),
-        execPair: (area) => join(dir, "exec", `planner__${area}`),
+        execPair: (area, shard) =>
+          join(dir, "exec", shard === undefined ? `planner__${area}` : `planner__${area}__w${shard}`),
         brief: (pairDir, area) => join(pairDir, `${area}.brief.md`),
         report: (pairDir, area) => join(pairDir, `${area}.report.md`),
         closure: (pairDir) => join(pairDir, "closure.json"),
-        workspace: (area) => join(dir, "workspace", area),
-        workspaceFiles: (area) => join(dir, "workspace", area, "files"),
-        raw: (area) => join(dir, "workspace", area, "raw.md"),
+        workspace: (area, shard) =>
+          join(dir, "workspace", area, ...(shard === undefined ? [] : [`w${shard}`])),
+        workspaceFiles: (area, shard) =>
+          join(dir, "workspace", area, ...(shard === undefined ? [] : [`w${shard}`]), "files"),
+        raw: (area, shard) =>
+          join(dir, "workspace", area, ...(shard === undefined ? [] : [`w${shard}`]), "raw.md"),
         eventsNdjson: join(dir, "monitor", "events.ndjson"),
         rollup: join(dir, "monitor", "rollup.md"),
         verdictJson: join(dir, "verify", "verdict.json"),
         verdictMd: join(dir, "verify", "verdict.md"),
+        usageDir: join(dir, "usage"),
+        usageStage: (stage) => join(dir, "usage", `${stage}.json`),
         transcriptsDir: join(dir, ".transcripts"),
       };
     },

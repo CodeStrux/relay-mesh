@@ -15,8 +15,8 @@ $RELAY_ROOT/
 ├── goal.md                      # the user's goal verbatim + attachment manifest; written once by `plan`
 ├── inputs/                      # copies of --attach files (immutable after plan)
 ├── usage.ndjson                 # one line per LLM call:
-│                                #   {"ts":ISO,"round":"r001","profile":"exec-backend","model":"…",
-│                                #    "in":1234,"out":5678}
+│                                #   {"ts":ISO,"round":"r001","profile":"backend","model":"…",
+│                                #    "in":1234,"out":5678,"stage":"execute","domain":"backend"}
 └── rounds/
     └── r001/                    # zero-padded, append-only; r002+ are fix rounds
         ├── recon/
@@ -24,15 +24,19 @@ $RELAY_ROOT/
         │   ├── planner__recon-frontend/   # frontend.*
         │   ├── planner__recon-business/   # business.*
         │   └── planner__recon-vision/     # vision.*
-        ├── plan.md              # planner synthesis; MUST contain "## Domain brief: <area>" sections
-        ├── plan.approval.json   # {"decision":"approved"|"rejected","by":"<user>@<host>","at":ISO,
-        │                        #  "plan_sha256":"<hex>","notes":""}
+        ├── plan.md              # planner (or advisor) synthesis; "## Domain brief: <area>" sections
+        ├── plan.approval.json   # gate #1: {"decision":"approved"|"rejected","by":"<user>@<host>",
+        │                        #  "at":ISO,"plan_sha256":"<hex>","notes":""}
+        ├── roster.json          # gate #2 input: the execute-stage fleet (advisor- or default-authored)
+        │                        #   {"version":1,"execute":[{"domain":"backend","template":"exec-backend",
+        │                        #    "count":1,"modelEnv":"BACKEND_MODEL","effort":"xhigh"}, …]}
+        ├── roster.approval.json # gate #2: {"decision":…,"by":…,"at":ISO,"roster_sha256":"<hex>","notes":""}
         ├── exec/
         │   ├── planner__backend/          # backend.brief.md / backend.report.md / closure.json
         │   ├── planner__frontend/         # frontend.*
-        │   └── planner__infra/            # infra.*
+        │   └── planner__backend__w<i>/    # a sharded domain (count > 1): one pair dir per worker
         ├── workspace/
-        │   └── <area>/
+        │   └── <area>/          # or <area>/w<i>/ for a sharded domain (single-writer per shard)
         │       ├── files/…      # proposed artifacts, quarantined (never a live repo)
         │       └── raw.md       # verbatim salvage when executor output failed to parse
         ├── monitor/
@@ -40,6 +44,8 @@ $RELAY_ROOT/
         │   │                    #   {"t":ISO,"event":"report_updated","pair":"planner__backend",
         │   │                    #    "bytes":8123,"status":"partial","steps_done":3,"steps_total":5}
         │   └── rollup.md        # the monitor profile's ONE roll-up, written at phase end
+        ├── usage/
+        │   └── <stage>.json     # per-domain token roll-up at each stage boundary (recon|execute|verify)
         ├── verify/
         │   ├── verdict.json     # {"satisfied":bool,"gaps":[{"area":"…","description":"…"}],"generated":ISO}
         │   └── verdict.md       # prose rationale
@@ -120,10 +126,12 @@ plan_ref: rounds/r001/plan.md
 
 Designed so a relay root can later be shared across machines (syncthing/NFS):
 
-1. **Single writer per file.** Briefs: the approving CLI. `<area>.report.md`: the one executor
-   for that area. `closure.json`: the roll-up step. `events.ndjson`: the monitoring host.
-   `plan.approval.json`: the approving human's CLI. `project.json`: the plan CLI.
-   No file ever has two writers → no locks.
+1. **Single writer per file.** `<area>.brief.md`: the roster-approving CLI (gate #2).
+   `<area>.report.md`: the one executor for that pair (a shard owns its own pair dir).
+   `closure.json`: the roll-up step. `events.ndjson`: the monitoring host.
+   `plan.approval.json` / `roster.approval.json`: the approving human's CLI. `project.json`: the
+   plan CLI. `usage/<stage>.json`: the host that completes that stage. No file ever has two
+   writers → no locks.
 2. **Atomic publication.** Every write goes to `<name>.part` in the same directory, then
    `rename(2)`. A visible file is always complete.
 3. **Readers ignore `*.part` and dot-prefixed entries.** (`watch` may display `.part` byte sizes
@@ -144,8 +152,10 @@ Evaluated per round, in order; the first match wins:
 | any recon pair missing a parseable report                   | `recon`            |
 | recon done, no `plan.md`                                    | `synthesis`        |
 | `plan.md` present, no approval file                         | `awaiting-approval`|
-| approval `decision == rejected`                             | `replanning`       |
-| approved & sha256 matches, any exec pair not terminal       | `executing`        |
+| plan approval `decision == rejected`                        | `replanning`       |
+| plan approved, roster not approved (or its sha256 is stale) | `awaiting-roster`  |
+| plan approved, roster approval `decision == rejected`       | `roster-revising`  |
+| both approved & both sha256 match, any exec pair not terminal | `executing`      |
 | exec terminal, no `monitor/rollup.md`                       | `rollup`           |
 | rollup present, no `verify/verdict.json`                    | `verifying`        |
 | `verdict.satisfied == true`                                 | `done`             |
@@ -157,10 +167,18 @@ Evaluated per round, in order; the first match wins:
 
 ## Approval integrity
 
-`plan.approval.json` pins `sha256(plan.md)` at approval time. `execute` re-hashes `plan.md` and
-refuses on mismatch (exit 1, "plan edited after approval — re-approve"). Domain briefs are
-extracted **deterministically** from the approved `plan.md` (`## Domain brief: <area>` sections,
-verbatim, with a fixed protocol preamble prepended). No LLM runs between approval and execution.
+Two gates, each sha256-pinned. `plan.approval.json` pins `sha256(plan.md)` at gate #1.
+`roster.approval.json` pins `sha256(roster.json)` at gate #2; the roster gate first re-verifies
+gate #1 (approved plan, unedited) before it materializes briefs. `execute` re-hashes BOTH files
+and refuses on either mismatch (exit 1). Worker briefs are materialized **deterministically** from
+the approved roster + `plan.md` (`## Domain brief: <domain>` sections, verbatim, with a fixed
+protocol preamble). No LLM runs between either approval and execution.
+
+The roster is the sole authority for the execute fan-out: per domain it sets a `count` (workers),
+a model **slot** (`modelEnv` — a name resolved only via the operator's `.env`, never an inline
+model id), an `effort`, and a `template` (an executor profile supplying the persona). It may
+introduce a **new** domain (minted from a template) or **shard** a domain across N parallel
+workers. Recon runs inside `plan` (before either gate) and is not governed by the roster.
 
 ## Exit codes (all commands)
 

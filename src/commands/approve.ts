@@ -1,17 +1,13 @@
-/** approve: the human gate — pin sha256(plan.md), then extract exec briefs deterministically. */
+/** approve: human gate #1 — pin sha256(plan.md). Exec briefs are authored at the roster gate (#2). */
 import { createHash } from "node:crypto";
-import { rm } from "node:fs/promises";
 import { hostname, userInfo } from "node:os";
-import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
-import { briefPreamble } from "../agents/execute.js";
-import { extractDomainBriefs } from "../agents/plan.js";
+import { extractDomainBriefs } from "../relay/briefs.js";
 import { loadConfig } from "../config.js";
-import { byRole, loadProfiles, type Profile } from "../profiles.js";
-import { atomicWrite, listVisible, safeRead } from "../relay/fsio.js";
-import { meshPaths, type RoundPaths } from "../relay/paths.js";
-import { areaOf, deriveState } from "../relay/state.js";
+import { atomicWrite, safeRead } from "../relay/fsio.js";
+import { meshPaths } from "../relay/paths.js";
+import { deriveState } from "../relay/state.js";
 import { readPairRows } from "./status.js";
 
 function wordCount(text: string): number {
@@ -28,42 +24,6 @@ async function askGate(prompt: string): Promise<string> {
     ]);
   } finally {
     rl.close();
-  }
-}
-
-/** Verbatim domain briefs + the fixed protocol preamble — no LLM between approval and execution. */
-async function writeBriefs(
-  rp: RoundPaths,
-  round: string,
-  executors: Profile[],
-  briefs: Map<string, string>,
-): Promise<number> {
-  let written = 0;
-  for (const p of executors) {
-    const md = p.area === undefined ? undefined : briefs.get(p.area);
-    if (p.area === undefined || md === undefined) continue;
-    const pairDir = rp.execPair(p.area);
-    await atomicWrite(rp.brief(pairDir, p.area), briefPreamble(p.area, round) + md + "\n");
-    written++;
-  }
-  return written;
-}
-
-/**
- * A rejected → revised plan can drop a domain brief, orphaning an exec pair dir
- * whose brief-only presence would wedge the phase machine at "executing" forever
- * (no executor will ever report for it). Pairs holding any report file — even an
- * in-flight one — are never touched.
- */
-async function pruneStaleExecPairs(rp: RoundPaths, briefs: Map<string, string>): Promise<void> {
-  const execDir = join(rp.dir, "exec");
-  for (const name of await listVisible(execDir)) {
-    if (!name.includes("__")) continue;
-    const pairDir = join(execDir, name);
-    const files = await listVisible(pairDir);
-    if (briefs.has(areaOf(name, files, false))) continue;
-    if (files.some((f) => f.endsWith(".report.md"))) continue;
-    await rm(pairDir, { recursive: true, force: true });
   }
 }
 
@@ -87,7 +47,6 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   const config = loadConfig({ requireApiKey: false }); // the gate is deterministic — no LLM call
-  const profiles = await loadProfiles(config.profilesPath);
   const root = config.relayRoot;
   const state = await deriveState(root);
   const round = values.round ?? state.round;
@@ -130,19 +89,12 @@ export async function run(argv: string[]): Promise<number> {
 
   const planSha = createHash("sha256").update(planMd).digest("hex");
   const briefs = extractDomainBriefs(planMd);
-  const executors = byRole(profiles, "executor");
 
   console.log(`plan: rounds/${round}/plan.md`);
   console.log(`sha256: ${planSha}`);
-  console.log("domain briefs:");
+  console.log("domain briefs (the roster gate decides which run, and how many):");
   for (const [area, md] of briefs) {
-    const hasExec = executors.some((p) => p.area === area);
-    console.log(`  ${area}: ${wordCount(md)} words${hasExec ? "" : "  (no executor profile — will not run)"}`);
-  }
-  for (const p of executors) {
-    if (p.area !== undefined && !briefs.has(p.area)) {
-      console.log(`  ${p.area}: MISSING domain brief — this executor will be skipped`);
-    }
+    console.log(`  ${area}: ${wordCount(md)} words`);
   }
   const blocked = (await readPairRows(root, round))
     .filter((r) => r.kind === "recon" && r.block?.status === "blocked")
@@ -165,10 +117,8 @@ export async function run(argv: string[]): Promise<number> {
     try {
       const existing = JSON.parse(existingRaw) as { decision?: unknown; plan_sha256?: unknown };
       if (existing.decision === "approved" && existing.plan_sha256 === planSha) {
-        await writeBriefs(rp, round, executors, briefs);
-        await pruneStaleExecPairs(rp, briefs);
-        console.log("already approved at this plan hash — exec briefs are in place");
-        console.log("next: relay-mesh execute");
+        console.log("already approved at this plan hash");
+        console.log("next: relay-mesh roster");
         return 0;
       }
     } catch {
@@ -188,9 +138,7 @@ export async function run(argv: string[]): Promise<number> {
 
   const approval = { decision: "approved", by, at, plan_sha256: planSha, notes: "" };
   await atomicWrite(rp.approval, `${JSON.stringify(approval)}\n`);
-  const written = await writeBriefs(rp, round, executors, briefs);
-  await pruneStaleExecPairs(rp, briefs);
-  console.log(`approved — ${written} exec brief(s) written`);
-  console.log("next: relay-mesh execute");
+  console.log("approved — plan.approval.json written");
+  console.log("next: relay-mesh roster");
   return 0;
 }

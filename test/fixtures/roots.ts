@@ -89,7 +89,44 @@ export async function addPlan(dir: string, opts: { round?: string; content?: str
   return createHash("sha256").update(content).digest("hex");
 }
 
-/** Writes plan.approval.json (sha of current plan.md unless overridden) and, when approved, exec briefs. */
+/** Writes roster.json + roster.approval.json (approved unless overridden). */
+export async function addRoster(
+  dir: string,
+  opts: {
+    round?: string;
+    decision?: "approved" | "rejected";
+    execAreas?: string[];
+    rosterSha256?: string;
+  } = {},
+): Promise<void> {
+  const round = opts.round ?? "r001";
+  const rp = meshPaths(dir).round(round);
+  const execAreas = opts.execAreas ?? EXEC_AREAS;
+  const roster = {
+    version: 1,
+    execute: execAreas.map((a) => ({
+      domain: a,
+      template: `exec-${a}`,
+      count: 1,
+      modelEnv: `${a.toUpperCase()}_MODEL`,
+      effort: "low",
+    })),
+  };
+  const raw = `${JSON.stringify(roster, null, 2)}\n`;
+  await atomicWrite(rp.roster, raw);
+  const decision = opts.decision ?? "approved";
+  const sha = opts.rosterSha256 ?? createHash("sha256").update(raw).digest("hex");
+  await atomicWrite(
+    rp.rosterApproval,
+    `${JSON.stringify({ decision, by: "test@host", at: "2026-07-06T00:00:00Z", roster_sha256: sha, notes: "" })}\n`,
+  );
+}
+
+/**
+ * Writes plan.approval.json (sha of current plan.md unless overridden) and, when
+ * approved, exec briefs plus an approved roster (so state reaches "executing").
+ * Pass roster:false to stop at gate #2 (phase "awaiting-roster").
+ */
 export async function addApproval(
   dir: string,
   opts: {
@@ -97,6 +134,8 @@ export async function addApproval(
     decision?: "approved" | "rejected";
     planSha256?: string;
     execAreas?: string[];
+    roster?: boolean;
+    rosterSha256?: string;
   } = {},
 ): Promise<void> {
   const round = opts.round ?? "r001";
@@ -115,6 +154,9 @@ export async function addApproval(
     for (const area of opts.execAreas ?? EXEC_AREAS) {
       const pairDir = rp.execPair(area);
       await atomicWrite(rp.brief(pairDir, area), `# Execution brief: ${area}\n`);
+    }
+    if (opts.roster ?? true) {
+      await addRoster(dir, { round, execAreas: opts.execAreas, rosterSha256: opts.rosterSha256 });
     }
   }
 }

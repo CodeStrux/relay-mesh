@@ -6,6 +6,7 @@ import { run as costs } from "./commands/costs.js";
 import { run as doctor } from "./commands/doctor.js";
 import { run as execute } from "./commands/execute.js";
 import { run as plan } from "./commands/plan.js";
+import { run as roster } from "./commands/roster.js";
 import { run as runCmd } from "./commands/run.js";
 import { run as status } from "./commands/status.js";
 import { run as verify } from "./commands/verify.js";
@@ -15,6 +16,7 @@ const COMMANDS: Record<string, (argv: string[]) => Promise<number>> = {
   doctor,
   plan,
   approve,
+  roster,
   execute,
   verify,
   run: runCmd,
@@ -33,7 +35,9 @@ commands:
   plan "<goal>" [--attach f]… [--project p] [--force]
                                             mint the relay root, run recon, synthesize the plan
   approve [--round rNNN] [--yes] [--reject "notes"]
-                                            human gate: pin sha256(plan.md), write exec briefs
+                                            human gate #1: pin sha256(plan.md)
+  roster [--round rNNN] [--yes] [--reject "notes"]
+                                            human gate #2: pin sha256(roster.json), write exec briefs
   execute [--area a]… [--force-area a]… [--project p]
                                             parallel executors + monitor poller + roll-up
   verify [--round rNNN]                     verdict vs the goal; scaffolds a fix round on gaps
@@ -41,7 +45,8 @@ commands:
   status [--json]                           derived state, per-area table, spend, next command
   watch [--interval ms]                     read-only live fleet table (Ctrl-C exits)
   close <pair-dir>                          deterministic closure.json roll-up for one pair dir
-  costs [--by profile|round|model]          token spend from usage.ndjson
+  costs [--by profile|round|model|domain|stage] [--round rNNN]
+                                            token spend from usage.ndjson
 
 exit codes: 0 ok · 1 error · 2 awaiting a human · 3 blocked outcomes present`;
 

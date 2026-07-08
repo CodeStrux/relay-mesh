@@ -47,13 +47,16 @@ export interface MeshPaths { /* every path in docs/protocol.md as a method */ }
 export function meshPaths(root: string): {
   root: string; meshJson: string; goal: string; inputsDir: string; usage: string; roundsDir: string;
   round(r: string): {
-    dir: string; plan: string; approval: string;
+    dir: string; plan: string; approval: string; roster: string; rosterApproval: string;
     reconPair(profileName: string): string;         // rounds/rX/recon/planner__<profileName>
-    execPair(area: string): string;                 // rounds/rX/exec/planner__<area>
+    execPair(area: string, shard?: number): string; // planner__<area> | planner__<area>__w<shard>
     brief(pairDir: string, area: string): string; report(pairDir: string, area: string): string;
     closure(pairDir: string): string;
-    workspace(area: string): string; workspaceFiles(area: string): string; raw(area: string): string;
-    eventsNdjson: string; rollup: string; verdictJson: string; verdictMd: string; transcriptsDir: string;
+    // shard undefined ⇒ workspace/<area>/… (byte-identical to today); else workspace/<area>/w<shard>/…
+    workspace(area: string, shard?: number): string; workspaceFiles(area: string, shard?: number): string; raw(area: string, shard?: number): string;
+    eventsNdjson: string; rollup: string; verdictJson: string; verdictMd: string;
+    usageDir: string; usageStage(stage: string): string;   // rounds/rX/usage/<stage>.json
+    transcriptsDir: string;
   };
 };
 export function nextRound(existing: string[]): string; // ["r001"] -> "r002"; [] -> "r001"
@@ -63,16 +66,20 @@ export function nextRound(existing: string[]): string; // ["r001"] -> "r002"; []
 
 ```ts
 export type Phase = "idle" | "recon" | "synthesis" | "awaiting-approval" | "replanning"
-  | "executing" | "rollup" | "verifying" | "fix-planning" | "done";
+  | "awaiting-roster" | "roster-revising" | "executing" | "rollup" | "verifying" | "fix-planning" | "done";
 export interface PairState { pair: string; area: string; hasBrief: boolean; hasReport: boolean; status: import("./report.js").Status | null; }
 export interface RunState {
   root: string; round: string | null; phase: Phase;
   recon: PairState[]; exec: PairState[];
   approval: { decision: "approved" | "rejected"; planSha256: string } | null;
   planSha256: string | null;   // current hash of plan.md, null if absent
+  rosterApproval: { decision: "approved" | "rejected"; rosterSha256: string } | null;
+  rosterSha256: string | null; // current hash of roster.json, null if absent
   verdict: { satisfied: boolean } | null;
 }
 export function deriveState(root: string): Promise<RunState>; // pure fn of the filesystem, per docs/protocol.md
+/** shard-aware area from a pair name: strips a trailing __w<i>, then the sender prefix. */
+export function areaOf(pairName: string, files: string[], recon: boolean): string;
 ```
 
 ## src/relay/artifacts.ts
@@ -133,9 +140,45 @@ export interface Profile {
   name: string; role: Role; domain: string; area?: string;
   modelEnv: string; effort: import("./openrouter.js").Effort;
   prompt: string; multimodal: boolean; maxOutputTokens?: number;
+  template?: boolean; // an area-less executor persona the roster mints new domains from
 }
-export function loadProfiles(path: string): Promise<Profile[]>; // zod-validated; unique names; exactly 1 planner/monitor/verifier; unique executor areas
+export function loadProfiles(path: string): Promise<Profile[]>; // zod-validated; unique names; exactly 1 planner/monitor/verifier; unique CONCRETE executor areas; area/domain !~ /^w\d+$/
 export function byRole(profiles: Profile[], role: Role): Profile[];
+```
+
+## src/relay/briefs.ts
+
+```ts
+export const BRIEF_HEADING: string; // "## Domain brief:"
+/** area → brief body, parsed from an approved plan.md's "## Domain brief: <area>" sections. */
+export function extractDomainBriefs(planMd: string): Map<string, string>;
+```
+
+## src/relay/roster.ts
+
+The execute-stage fan-out contract (gate #2). Pure + deterministic — no LLM. Models resolve only
+through slot names; an inline id or unknown slot is a lint failure and an `expandRoster` throw.
+
+```ts
+export interface RosterEntry { domain: string; template: string; count: number; modelEnv: string; effort: import("../openrouter.js").Effort; }
+export interface Roster { version: 1; execute: RosterEntry[]; }
+export interface WorkerSpec {
+  profile: import("../profiles.js").Profile;  // minted per shard: name=domain|domain__w<i>, area=domain, DOMAIN=domain
+  domain: string; area: string;
+  pairName: string;            // planner__<area> (count 1) | planner__<area>__w<i> (count>1)
+  shardIndex: number; shardCount: number;
+  briefBody: string;           // verbatim plan brief + shardInstruction(i,n)
+}
+export const rosterSchema; // z.strictObject ⇒ an inline `model` key is a PARSE error
+export function parseRoster(raw: string): Roster;
+export function serializeRoster(r: Roster): string;      // 2-space + trailing \n (byte-stable, for sha)
+export function rosterSha256(rawBytes: string): string;  // over EXACT on-disk bytes (mirrors sha256(plan.md))
+export function loadRoster(path: string): Promise<{ roster: Roster; raw: string; sha256: string } | null>;
+export function defaultRoster(planMd: string, profiles: Profile[]): Roster;  // no-advisor fallback: one entry per brief heading
+export function expandRoster(planMd: string, roster: Roster, profiles: Profile[]): WorkerSpec[]; // pure; re-checks models-lock/reserved/brief (throws)
+export function shardInstruction(i: number, n: number): string;             // "" when n===1 (byte-identical single-worker path)
+export function knownSlots(profiles: Profile[]): Set<string>;               // Object.keys(MODEL_DEFAULTS) ∪ every profile.modelEnv
+export function lintRoster(planMd: string, roster: Roster, profiles: Profile[], config: import("../config.js").Config): string[]; // gate-#2 problems; [] = ok
 ```
 
 ## src/prompts.ts
@@ -149,10 +192,19 @@ export function composePrompt(promptPath: string, vars: Record<string, string>):
 ## src/usage.ts
 
 ```ts
-export interface UsageLine { ts: string; round: string; profile: string; model: string; in: number; out: number; }
+export type Stage = "recon" | "execute" | "verify";
+export interface UsageLine { ts: string; round: string; profile: string; model: string; in: number; out: number; stage?: Stage; domain?: string; }
 export function recordUsage(usagePath: string, line: UsageLine): Promise<void>;
-export function aggregate(lines: UsageLine[], by: "profile" | "round" | "model"): { key: string; in: number; out: number; calls: number }[];
 export function readUsage(usagePath: string): Promise<UsageLine[]>;
+export function aggregate(lines: UsageLine[], by: "profile" | "round" | "model" | "domain" | "stage"): { key: string; in: number; out: number; calls: number }[];
+
+// Per-domain stage roll-up (the JSON token report at each stage boundary).
+export interface DomainUsage { domain: string; agents: number; calls: number; in: number; out: number; total: number; }
+export interface StageUsage { stage: Stage; round: string; generated: string; byDomain: DomainUsage[]; totals: { calls: number; in: number; out: number; total: number }; }
+export function secondsStamp(now?: Date): string;   // ISO with .SSS stripped (closure `generated` convention)
+export function makeResolver(profiles: import("./profiles.js").Profile[]): (line: UsageLine) => string; // line→domain, legacy-tolerant
+export function rollupStage(lines: UsageLine[], stage: Stage, round: string, generated: string, resolve?: (l: UsageLine) => string): StageUsage; // pure
+export function writeStageRollup(path: string, lines: UsageLine[], stage: Stage, round: string, resolve?: (l: UsageLine) => string, now?: Date): Promise<void>; // atomicWrite
 ```
 
 ## src/context.ts
@@ -189,7 +241,7 @@ export function bundleForExecutor(
 ```ts
 import type { LlmClient } from "../openrouter.js";
 import type { Profile } from "../profiles.js";
-export interface CallCtx { client: LlmClient; config: import("../config.js").Config; round: string; usagePath: string; transcriptsDir: string; }
+export interface CallCtx { client: LlmClient; config: import("../config.js").Config; round: string; stage: import("../usage.js").Stage; usagePath: string; transcriptsDir: string; }
 /** One profile call: compose prompt → stream to <outPath>.part (via onChunk) → rename; usage line; transcript.
  *  publish: false skips the rename — the .part still streams for liveness and the CALLER publishes
  *  (raw executor/planner output must never become protocol-visible before it is vetted). */

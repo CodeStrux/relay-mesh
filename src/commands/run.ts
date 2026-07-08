@@ -5,6 +5,7 @@ import { deriveState } from "../relay/state.js";
 import { run as approveCmd } from "./approve.js";
 import { run as executeCmd } from "./execute.js";
 import { readGoal, run as planCmd } from "./plan.js";
+import { run as rosterCmd } from "./roster.js";
 import { run as verifyCmd } from "./verify.js";
 
 export async function run(argv: string[]): Promise<number> {
@@ -85,6 +86,12 @@ export async function run(argv: string[]): Promise<number> {
       case "awaiting-approval":
       case "replanning": {
         lastCode = await approveCmd(values.yes ? ["--yes"] : []);
+        if (lastCode !== 0) return lastCode; // gate-stop
+        break;
+      }
+      case "awaiting-roster":
+      case "roster-revising": {
+        lastCode = await rosterCmd(values.yes ? ["--yes"] : []);
         if (lastCode !== 0) return lastCode; // gate-stop
         break;
       }
