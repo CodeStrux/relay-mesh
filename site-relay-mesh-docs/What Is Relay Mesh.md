@@ -38,7 +38,7 @@ flowchart LR
     W3 --> A
 ```
 
-**Layer 1, the advisor brain.** This is your Claude Code session. It loads the skills, reads the recon output, drafts the plan and the roster, runs the CLI, and reads the results back. It does no worker inference. The model behind this session is a Claude model, and you can pick a different one for different phases. That is where Sonnet 5, Opus 4.8, and Fable 5 come in on Layer 1.
+**Layer 1, the advisor brain.** This is your Claude Code session. It loads the skills, reads the recon output, drafts the plan and the roster, runs the CLI, and reads the results back. It does no worker inference. The model behind this session is a Claude model, and you can pick a different one for different phases. That is where Haiku 4.5, Sonnet 5, Opus 4.8, and Fable 5 come in on Layer 1.
 
 **Layer 2, the worker fleet.** These are the agents that actually do the recon, write the proposed files, monitor, and verify. Their models come only from `.env`, named by slot, resolved to OpenRouter slugs. The stock defaults are open-weight models (GLM, DeepSeek, Kimi, Gemma). OpenRouter also serves Anthropic models, so a slot can be pointed at a Claude model if you want a Claude worker.
 

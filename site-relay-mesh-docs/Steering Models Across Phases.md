@@ -1,6 +1,6 @@
 ---
 title: Steering Models Across Phases
-description: Where Sonnet 5, Opus 4.8, and Fable 5 fit across the two brains.
+description: Where Haiku 4.5, Sonnet 5, Opus 4.8, and Fable 5 fit across the two brains.
 tags: [relay-mesh, models]
 publish: true
 ---
@@ -9,7 +9,7 @@ publish: true
 
 > [!info] Back to [[Relay Mesh Reference]]
 
-This is the note the whole vault builds toward. It answers one question: where do Sonnet 5, Opus 4.8, and Fable 5 fit in a relay-mesh run, and how do the skills help you steer them.
+This is the note the whole vault builds toward. It answers one question: where do Haiku 4.5, Sonnet 5, Opus 4.8, and Fable 5 fit in a relay-mesh run, and how do the skills help you steer them.
 
 ## The honest starting point
 
@@ -27,22 +27,23 @@ The advisor is the brain reading recon output, drafting the plan and roster, jud
 
 | Advisor model | Best for these phases and tasks | Why |
 |---|---|---|
-| **Opus 4.8** (1M context) | Gate 1 plan review and synthesis judgement, authoring a complex or sharded roster, reading `verdict.json` on a nuanced miss, clearing a hard blocked outcome, planning a fix round. | Deepest reasoning and the largest context window, so it can hold four recon briefs plus the goal plus source files and still reason about tradeoffs. Use it where a wrong call is expensive. |
+| **Fable 5** (1M context) | The hardest, most ambiguous calls: a high-stakes or under-specified goal at gate 1, a subtle `verdict.json` miss, the gnarliest blocked outcome — when you want maximum capability and a wrong call is very costly. | Anthropic's most capable model, for the most demanding reasoning and long-horizon work. Also the most expensive ($10 / $50 per 1M tokens), so reach for it deliberately, not by default. |
+| **Opus 4.8** (1M context) | Gate 1 plan review and synthesis judgement, authoring a complex or sharded roster, reading `verdict.json` on a nuanced miss, clearing a hard blocked outcome, planning a fix round. | Deep reasoning and a 1M context window, so it can hold four recon briefs plus the goal plus source files and still reason about tradeoffs. Your standard heavy tier at the gates, where a wrong call is expensive. |
 | **Sonnet 5** | The default driver for the whole loop, routine roster authoring, supervising `execute`, standard readouts. | Balanced speed, cost, and reasoning. This is the workhorse you run most of the time. |
-| **Fable 5** | Fast glance work: `status` and `watch` polling, `costs` checks, quick `closure.json` reads, skimming the monitor rollup. | Fastest and cheapest. Ideal for the high-frequency, low-judgement checks you do many times per run. |
+| **Haiku 4.5** | Fast glance work: `status` and `watch` polling, `costs` checks, quick `closure.json` reads, skimming the monitor rollup. | Fastest and cheapest ($1 / $5 per 1M tokens). Ideal for the high-frequency, low-judgement checks you do many times per run. |
 
 ```mermaid
 flowchart LR
-    F["Fable 5<br/>status, watch, costs, quick reads"]
+    H["Haiku 4.5<br/>status, watch, costs, quick reads"]
     S["Sonnet 5<br/>drive the loop, roster, execute, readouts"]
     O["Opus 4.8<br/>plan review, complex roster, verdict, clear blocked"]
-    F --> S --> O
-    O -.->|escalate weight| O
-    F -.->|routine to deep| O
+    F["Fable 5<br/>hardest goals, subtlest verdicts, max capability"]
+    H --> S --> O --> F
+    H -.->|routine to deepest| F
 ```
 
 > [!tip] A practical pattern
-> Run the session on Sonnet 5 by default, switch up to Opus 4.8 at gate 1 and gate 2 for a large or ambiguous goal, and drop to Fable 5 in a second terminal that only runs `watch` and `status`.
+> Run the session on Sonnet 5 by default, switch up to Opus 4.8 at gate 1 and gate 2 for a large or ambiguous goal (and to Fable 5 for the rare goal that is genuinely hard to reason through), and drop to Haiku 4.5 in a second terminal that only runs `watch` and `status`.
 
 ## Layer 2 — The worker slots
 
@@ -50,19 +51,19 @@ The worker fleet's models come from seven `.env` slots, assigned per domain in `
 
 | Slot | Used by (phase) | Stock open-weight default | Suggested Claude tier if you want a Claude worker |
 |---|---|---|---|
-| `PLANNER_MODEL` | planner synthesis, recon-business, verifier | `z-ai/glm-5.2` | Opus 4.8 class, deep synthesis and verdict |
+| `PLANNER_MODEL` | planner synthesis, recon-business, verifier | `z-ai/glm-5.2` | Opus 4.8 class for deep synthesis and verdict; Fable 5 class for the hardest goals |
 | `RECON_CODE_MODEL` | recon-backend, recon-frontend | `deepseek/deepseek-v4-pro` | Sonnet 5 class, fast code reconnaissance |
 | `VISION_MODEL` | recon-vision (multimodal) | `google/gemma-4-26b-a4b-it` | a multimodal model that reads your attachments |
 | `BACKEND_MODEL` | exec-backend | `z-ai/glm-5.2` | Sonnet 5 class, balanced coder |
 | `FRONTEND_MODEL` | exec-frontend | `moonshotai/kimi-k2.7-code` | Sonnet 5 class, balanced coder |
 | `INFRA_MODEL` | exec-infra | `z-ai/glm-5.2` | Sonnet 5 class, balanced coder |
-| `MONITOR_MODEL` | monitor rollup | `google/gemma-4-31b-it` | Fable 5 class, cheap and fast for high-volume polling narration |
+| `MONITOR_MODEL` | monitor rollup | `google/gemma-4-31b-it` | Haiku 4.5 class, cheap and fast for high-volume polling narration |
 
 The tiering logic mirrors Layer 1. Put your deepest model where a wrong judgement is costly (planner and verifier), your balanced model on the executors that write code, and your cheapest fast model on the monitor that runs on a poll interval.
 
 ```mermaid
 flowchart TD
-    subgraph DEEP["Deep tier — Opus class"]
+    subgraph DEEP["Deep tier — Opus / Fable class"]
         PL["PLANNER_MODEL<br/>planner + verifier"]
     end
     subgraph BAL["Balanced tier — Sonnet class"]
@@ -71,7 +72,7 @@ flowchart TD
         FE["FRONTEND_MODEL"]
         IN["INFRA_MODEL"]
     end
-    subgraph FAST["Fast tier — Fable class"]
+    subgraph FAST["Fast tier — Haiku class"]
         MO["MONITOR_MODEL"]
     end
     VI["VISION_MODEL<br/>multimodal, matched to attachments"]

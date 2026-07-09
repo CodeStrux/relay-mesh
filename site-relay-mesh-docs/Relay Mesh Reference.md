@@ -7,7 +7,7 @@ publish: true
 
 # Relay Mesh Reference
 
-A field guide to operating **relay-mesh**, the parallel-workstream orchestrator, and the **relay-mesh-agent-skills** pack that teaches a coding agent to drive it. This vault covers what the tool is, the command loop, the two human gates, how the skills steer each phase, and how the Claude models (Sonnet 5, Opus 4.8, Fable 5) map onto the work.
+A field guide to operating **relay-mesh**, the parallel-workstream orchestrator, and the **relay-mesh-agent-skills** pack that teaches a coding agent to drive it. This vault covers what the tool is, the command loop, the two human gates, how the skills steer each phase, and how the Claude models (Haiku 4.5, Sonnet 5, Opus 4.8, Fable 5) map onto the work.
 
 relay-mesh has two brains. The **advisor** is your Claude Code session running the skills, the thing that proposes a plan and a roster and types the commands. The **worker fleet** is a set of agents on open-weight models, called through OpenRouter, that do the actual inference. You steer both, and the model choice for both is always yours.
 
@@ -38,7 +38,7 @@ flowchart TD
 - [[The Command Loop]] — Every command, the phase machine, and the exit codes.
 - [[The Two Gates]] — Why nothing runs without a human keystroke, twice.
 - [[The Skill Pack]] — The four skills and which phase each one steers.
-- [[Steering Models Across Phases]] — Where Sonnet 5, Opus 4.8, and Fable 5 fit.
+- [[Steering Models Across Phases]] — Where Haiku 4.5, Sonnet 5, Opus 4.8, and Fable 5 fit.
 - [[Walkthrough]] — An end-to-end run, from goal to verified outcome.
 - [[Reference Cheatsheet]] — Exit codes, model slots, stock profiles, quick lookup.
 
