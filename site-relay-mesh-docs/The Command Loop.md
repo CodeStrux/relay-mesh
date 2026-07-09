@@ -46,13 +46,13 @@ stateDiagram-v2
 | Command | Reads | Writes | Notes |
 |---|---|---|---|
 | `doctor` | `.env`, `profiles.json`, `prompts/`, relay root | nothing | Env, key, prompt, and root checks. When a key is set, model slugs are validated live against OpenRouter with fuzzy suggestions. `--models` prints the full model list. Run first, always. |
-| `plan` | goal, attachments, project files (read only) | `goal.md`, `inputs/`, `project.json`, recon pairs, `plan.md` | Deterministic recon briefs, then four-way parallel recon (the vision profile gets attachments as image or video parts), then one planner synthesis call. |
-| `approve` | `plan.md` | `plan.approval.json` | Gate 1. Requires typing `approve` (or `--yes`). Pins `sha256(plan.md)`. Does not write briefs. |
-| `roster` | `plan.md`, `plan.approval.json`, `roster.json` if present, `profiles.json` | `roster.json` if absent, `roster.approval.json`, exec briefs | Gate 2. Re-verifies gate 1, lints the roster, prints the fleet table, pins `sha256(roster.json)`, and materializes worker briefs. Authors a default roster only when none exists. |
-| `execute` | both approvals, both hashes, `roster.json`, briefs, project files | reports, `workspace/`, monitor files, `closure.json`, `usage/execute.json` | Re-hashes both `plan.md` and `roster.json`, refuses on any mismatch (exit 1). Fans out to the workers the roster expands to. `--area` is the multi-machine split seam. |
+| `plan` | goal, attachments, project files (read only) | `goal.md`, `inputs/`, `project.json`, recon pairs, `plan.md` | Deterministic recon briefs, then four-way parallel recon (the vision profile gets attachments as image or video parts), then one planner synthesis call. `--force` replaces the goal and re-plans. |
+| `approve` | `plan.md` | `plan.approval.json` | Gate 1 (`--round rNNN`, `--reject "notes"`). Requires typing `approve` (or `--yes`); `--reject` writes a rejected approval (exit 2, gate stays armed). Pins `sha256(plan.md)`. Does not write briefs. |
+| `roster` | `plan.md`, `plan.approval.json`, `roster.json` if present, `profiles.json` | `roster.json` if absent, `roster.approval.json`, exec briefs | Gate 2 (`--round rNNN`, `--reject "notes"`). Re-verifies gate 1, lints the roster (hard-block, exit 1), prints the fleet table, pins `sha256(roster.json)`, and materializes worker briefs. Authors a default roster only when none exists. |
+| `execute` | both approvals, both hashes, `roster.json`, briefs, project files | reports, `workspace/`, monitor files, `closure.json`, `usage/execute.json` | Re-hashes both `plan.md` and `roster.json`, refuses on any mismatch (exit 1). Fans out to the workers the roster expands to. `--area` (repeatable) is the multi-machine split seam; `--force-area` (repeatable) re-runs one area by deleting its report + workspace; `--project` points at a local checkout. |
 | `verify` | goal, plan, reports, rollup | `verify/verdict.json`, `verdict.md`, next round's fix plan if unsatisfied | Strict-JSON verdict with one repair re-prompt. Unsatisfied and below `MAX_FIX_ROUNDS` scaffolds the next round. |
 | `run` | everything above | everything above | Chains all phases with gates. A bare re-run resumes. |
-| `status` | relay root | nothing | Derived phase and per-pair table. `--json` for machine-readable output. |
+| `status` | relay root | nothing | Derived phase and per-pair table. `--json` for machine-readable output. Exit code mirrors the phase: 3 blocked, 0 done/idle, else 2. |
 | `watch` | relay root | nothing | Read-only live fleet table. Safe on any machine sharing the root. |
 | `close` | reports in a pair dir | `closure.json` | Standalone deterministic roll-up for one pair. |
 | `costs` | `usage.ndjson` | nothing | Token aggregation. `--by profile\|round\|model\|domain\|stage`. |

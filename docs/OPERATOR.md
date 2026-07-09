@@ -30,7 +30,7 @@ at each gate.
 | Step | Command | What it does | Stops at |
 |---|---|---|---|
 | 0 | `relay-mesh doctor [--models]` | env / key / profiles / prompts / root / live model-slug check | — |
-| 1 | `relay-mesh plan "<goal>" [--attach f]… [--project p]` | recon (ungated) → `plan.md` | exit 2 (gate #1) |
+| 1 | `relay-mesh plan "<goal>" [--attach f]… [--project p]` | recon (ungated) → `plan.md` | exit 0; gate #1 armed |
 | 2 | `relay-mesh approve` | **gate #1**: pins `sha256(plan.md)` | typed `approve` |
 | 3 | `relay-mesh roster` | **gate #2**: lints + pins `sha256(roster.json)`, writes briefs | typed `approve` |
 | 4 | `relay-mesh execute [--area a]… [--project p]` | OpenRouter worker fan-out + monitor | exit 3 if blocked |

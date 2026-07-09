@@ -35,16 +35,16 @@ The stock fleet is ten profiles. Recon domains are fixed here before `plan`. The
 
 | name | role | domain | modelEnv | effort |
 |---|---|---|---|---|
-| `planner` | planner | orchestration and synthesis | `PLANNER_MODEL` | xhigh |
+| `planner` | planner | orchestration & synthesis | `PLANNER_MODEL` | xhigh |
 | `recon-backend` | recon | backend + infra recon | `RECON_CODE_MODEL` | high |
-| `recon-frontend` | recon | frontend + UI recon | `RECON_CODE_MODEL` | high |
+| `recon-frontend` | recon | frontend + UI experience recon | `RECON_CODE_MODEL` | high |
 | `recon-business` | recon | business model mapping | `PLANNER_MODEL` | high |
 | `recon-vision` | recon | diagrams, boards, screenshots, video | `VISION_MODEL` | medium |
 | `exec-backend` | executor | backend | `BACKEND_MODEL` | xhigh |
 | `exec-frontend` | executor | frontend | `FRONTEND_MODEL` | medium |
 | `exec-infra` | executor | infra | `INFRA_MODEL` | high |
-| `monitor` | monitor | relay observation and roll-up | `MONITOR_MODEL` | low |
-| `verifier` | verifier | goal vs outcome verification | `PLANNER_MODEL` | xhigh |
+| `monitor` | monitor | relay observation & roll-up | `MONITOR_MODEL` | low |
+| `verifier` | verifier | goal-vs-outcome verification | `PLANNER_MODEL` | xhigh |
 
 Effort is one of `low`, `medium`, `high`, `xhigh`. Adding a domain is three edits and zero code: a profile entry in `profiles.json`, a prompt file in `prompts/`, and a model env var in `.env`.
 
@@ -65,7 +65,7 @@ The roster names slots, never ids. A minimal `roster.json`:
 
 `roster` hard-blocks on any of these:
 
-1. unknown template (not a profile)
+1. template is not an executor profile
 2. missing brief for a domain
 3. reserved domain name (matches `w<digits>`, the shard suffix)
 4. duplicate domain

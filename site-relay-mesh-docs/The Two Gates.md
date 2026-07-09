@@ -13,10 +13,10 @@ Nothing executes without you, twice. The two gates are the spine of the tool's s
 `roster` re-verifies gate 1, then shows the execute fleet: each domain's worker count, its persona template, and the model slot resolved through your `.env`.
 
 ```
-domain    count  template       modelEnv        -> model              effort
-backend   2      exec-backend   BACKEND_MODEL   -> z-ai/glm-5.2        xhigh
-frontend  1      exec-frontend  FRONTEND_MODEL  -> moonshotai/kimi-...  high
-docs      1      exec-frontend  FRONTEND_MODEL  -> moonshotai/kimi-...  medium
+execute fleet (models resolved from .env — the roster names only slots):
+  backend: 2× exec-backend @ z-ai/glm-5.2 (BACKEND_MODEL, xhigh)
+  frontend: 1× exec-frontend @ moonshotai/kimi-k2.7-code (FRONTEND_MODEL, high)
+  docs: 1× exec-frontend @ moonshotai/kimi-k2.7-code (FRONTEND_MODEL, medium)
 ```
 
 It lints the roster and hard-blocks on any problem: a domain with no brief, an unknown template, an inline model id or unknown slot, a reserved or duplicate domain. It requires you to type `approve`. Only then does it pin `sha256(roster.json)` and materialize the worker briefs. See [[The Skill Pack]] for the roster skill that authors this file and [[Reference Cheatsheet]] for the seven lint hard-blocks.

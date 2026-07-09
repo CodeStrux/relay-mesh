@@ -83,7 +83,7 @@ Exit codes are uniform across commands: `0` success / terminal-good · `1` error
 | Command | Arguments | Reads | Writes | Notes |
 |---|---|---|---|---|
 | `doctor` | `[--models]` | `.env`, `profiles.json`, `prompts/`, relay root | nothing | Env/key/prompt/root checks; whenever a key is set, model slugs are validated live against OpenRouter `/models` with fuzzy suggestions; `--models` additionally prints the full model list. Run first, always. |
-| `plan` | `"<goal>" [--attach file…] [--project path]` | goal, attachments, project files (read-only) | `goal.md`, `inputs/`, `project.json`, recon pair dirs, `rounds/rNNN/plan.md` | Deterministic recon briefs (no LLM before recon); 4-way parallel recon — the vision profile receives attachments as image/video parts; one planner synthesis call. `--project` is recorded in `project.json` so `execute` can bundle source files later. |
+| `plan` | `"<goal>" [--attach file…] [--project path] [--force]` | goal, attachments, project files (read-only) | `goal.md`, `inputs/`, `project.json`, recon pair dirs, `rounds/rNNN/plan.md` | Deterministic recon briefs (no LLM before recon); 4-way parallel recon — the vision profile receives attachments as image/video parts; one planner synthesis call. `--project` is recorded in `project.json` so `execute` can bundle source files later. |
 | `approve` | `[--round rNNN] [--yes] [--reject "notes"]` | `plan.md` | `plan.approval.json` | Gate #1. Interactive; requires typing `approve` (or `--yes`). Pins `sha256(plan.md)`. Does **not** write briefs — that is gate #2's job. Next: `roster`. |
 | `roster` | `[--round rNNN] [--yes] [--reject "notes"]` | `plan.md`, `plan.approval.json`, `roster.json` (if present), `profiles.json` | `roster.json` (only if absent), `roster.approval.json`, exec briefs | Gate #2. Re-verifies gate #1, then lints the roster (hard-block on any problem — unknown template, inline model id, unknown slot, missing brief, reserved/duplicate domain), prints the fleet table, pins `sha256(roster.json)`, and materializes worker briefs deterministically. Authors a default roster only when none exists. |
 | `execute` | `[--area a…] [--force-area a…] [--project path]` | both approvals, both hashes, `roster.json`, briefs, project files (read-only, via `project.json` or `--project`) | `<area>.report.md`, `workspace/<area>[/w<i>]/`, `monitor/events.ndjson`, `monitor/rollup.md`, `closure.json`, `usage/execute.json` | Refuses on either hash mismatch (exit 1). Fans out to the workers the approved roster expands to (sharded domains get one pair per worker). Executors receive the FULL current contents of project files their brief references (caps: `RELAY_EXEC_FILE_BYTES` / `RELAY_EXEC_BUNDLE_BYTES`); deterministic monitor poller; one monitor roll-up LLM call at phase end. Idempotent per pair; `--area` is the multi-machine split seam. |
@@ -103,10 +103,10 @@ Nothing executes without you, twice.
 **Gate #2 — the roster.** `roster` re-verifies gate #1, then shows the execute fleet — each domain's worker count, its persona template, and the model slot resolved through your `.env`:
 
 ```
-domain    count  template       modelEnv        -> model              effort
-backend   2      exec-backend   BACKEND_MODEL   -> z-ai/glm-5.2        xhigh
-frontend  1      exec-frontend  FRONTEND_MODEL  -> moonshotai/kimi-…   high
-docs      1      exec-frontend  FRONTEND_MODEL  -> moonshotai/kimi-…   medium
+execute fleet (models resolved from .env — the roster names only slots):
+  backend: 2× exec-backend @ z-ai/glm-5.2 (BACKEND_MODEL, xhigh)
+  frontend: 1× exec-frontend @ moonshotai/kimi-k2.7-code (FRONTEND_MODEL, high)
+  docs: 1× exec-frontend @ moonshotai/kimi-k2.7-code (FRONTEND_MODEL, medium)
 ```
 
 It lints the roster (a hard block on any problem — a domain with no `## Domain brief:`, an unknown template, an inline model id or unknown slot, a reserved/duplicate domain) and requires you to type `approve`. Only then does it pin `sha256(roster.json)` and materialize the worker briefs. `execute` re-hashes **both** `plan.md` and `roster.json` and refuses on any mismatch (exit 1). No LLM runs between either approval and execution — the advisor can propose a plan and a roster, but it can never approve them or change a model.
@@ -123,12 +123,14 @@ $ npx relay-mesh plan "Add magic-link login to the storefront" --project ../stor
 
 $ less relay/rounds/r001/plan.md      # read it; edit it if you like
 $ npx relay-mesh approve
-  round r001 — type `approve` to proceed: approve
-  approved. next: relay-mesh roster
+  type "approve" to approve rounds/r001/plan.md (anything else aborts): approve
+  approved — plan.approval.json written
+  next: relay-mesh roster
 
 $ npx relay-mesh roster               # gate #2: review the fleet table, then approve
-  round r001 — type `approve` to proceed: approve
-  roster approved. briefs written: backend, frontend, infra
+  type "approve" to approve rounds/r001/roster.json (anything else aborts): approve
+  approved — 3 exec brief(s) written
+  next: relay-mesh execute
 ```
 
 In a second terminal, watch the fleet while it executes:
@@ -145,9 +147,11 @@ Back in the first terminal:
 
 ```
 $ npx relay-mesh execute
-  exec done. blocked areas: infra          (exit 3 — read the report, clear it, re-run)
+  planner__backend: complete 5/5
+  planner__frontend: complete 4/4
+  planner__infra: blocked 1/3              (exit 3 — read the report, clear it, re-run)
 $ npx relay-mesh verify
-  satisfied: true                          (exit 0)
+  verdict: satisfied — the outcome matches the goal    (exit 0)
 ```
 
 ## Editing the fleet

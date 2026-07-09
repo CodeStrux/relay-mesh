@@ -45,7 +45,7 @@ export function appendLine(filePath: string, line: string): Promise<void>;     /
 ```ts
 export interface MeshPaths { /* every path in docs/protocol.md as a method */ }
 export function meshPaths(root: string): {
-  root: string; meshJson: string; goal: string; inputsDir: string; usage: string; roundsDir: string;
+  root: string; meshJson: string; projectJson: string; goal: string; inputsDir: string; usage: string; roundsDir: string;
   round(r: string): {
     dir: string; plan: string; approval: string; roster: string; rosterApproval: string;
     reconPair(profileName: string): string;         // rounds/rX/recon/planner__<profileName>
@@ -142,14 +142,14 @@ export interface Profile {
   prompt: string; multimodal: boolean; maxOutputTokens?: number;
   template?: boolean; // an area-less executor persona the roster mints new domains from
 }
-export function loadProfiles(path: string): Promise<Profile[]>; // zod-validated; unique names; exactly 1 planner/monitor/verifier; unique CONCRETE executor areas; area/domain !~ /^w\d+$/
+export function loadProfiles(path: string): Promise<Profile[]>; // zod-validated; unique names; exactly 1 planner/monitor/verifier; unique CONCRETE executor areas; executor area !~ /^w\d+$/
 export function byRole(profiles: Profile[], role: Role): Profile[];
 ```
 
 ## src/relay/briefs.ts
 
 ```ts
-export const BRIEF_HEADING: string; // "## Domain brief:"
+const BRIEF_HEADING = /^##\s+Domain brief:\s*(.+?)\s*$/; // module-private; only extractDomainBriefs is exported
 /** area → brief body, parsed from an approved plan.md's "## Domain brief: <area>" sections. */
 export function extractDomainBriefs(planMd: string): Map<string, string>;
 ```

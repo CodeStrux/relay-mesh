@@ -75,7 +75,7 @@ flowchart TD
 The skills do not pick models, they keep your picks legal and visible.
 
 - `relay-mesh-roster` assigns a slot per domain in `roster.json` and enforces the models-lock: a slot name only, never an inline id. See the seven lint hard-blocks in [[Reference Cheatsheet]].
-- At gate 2 the `roster` command prints the fleet table with each slot resolved to its actual model, so you eyeball `slot -> model` before you type approve. See [[The Two Gates]].
+- At gate 2 the `roster` command prints the execute fleet as one line per domain — `<domain>: <count>× <template> @ <model> (<SLOT>, <effort>)` — so you see each slot resolved to its actual model before you type approve. See [[The Two Gates]].
 - `doctor --models` validates every resolved slug live against OpenRouter and suggests near-misses, so a typo in a Claude slug is caught before a run.
 - `relay-mesh-readouts` uses `costs --by model` to catch a slot accidentally pointed at a pricey slug.
 
