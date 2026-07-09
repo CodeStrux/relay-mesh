@@ -1,6 +1,13 @@
+---
+title: Reference Cheatsheet
+description: Exit codes, model slots, stock profiles, quick lookup.
+tags: [relay-mesh, reference]
+publish: true
+---
+
 # Reference Cheatsheet
 
-Back to [[Relay Mesh Reference]].
+> [!info] Back to [[Relay Mesh Reference]]
 
 Dense lookup tables. For the narrative, see [[The Command Loop]], [[The Two Gates]], and [[Steering Models Across Phases]].
 
@@ -105,7 +112,8 @@ To split execution: `execute --area backend` on one host, `execute --area fronte
 
 ## Remote runner notes
 
-A run deploys to any box as `git clone + npm ci + npm run build + .env`, conventionally at `~/relay-mesh`. Two things bite:
+A run deploys to any box as `git clone + npm ci + npm run build + .env`, conventionally at `~/relay-mesh`.
 
-- nvm is interactive-only. A non-interactive ssh session needs `export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"` before any `node` or `npm`.
-- Long phases like `execute` should run detached on the remote (`nohup ... &` or tmux), then poll with `relay-mesh status` or `watch` from a second connection.
+> [!warning] Two things bite
+> - nvm is interactive-only. A non-interactive ssh session needs `export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"` before any `node` or `npm`.
+> - Long phases like `execute` should run detached on the remote (`nohup ... &` or tmux), then poll with `relay-mesh status` or `watch` from a second connection.

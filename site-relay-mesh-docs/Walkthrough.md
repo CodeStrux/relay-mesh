@@ -1,6 +1,13 @@
+---
+title: Walkthrough
+description: An end-to-end run, from goal to verified outcome.
+tags: [relay-mesh, tutorial]
+publish: true
+---
+
 # Walkthrough
 
-Back to [[Relay Mesh Reference]].
+> [!info] Back to [[Relay Mesh Reference]]
 
 An end-to-end run, from goal to verified outcome. The goal here is adding magic-link login to a storefront. Commands and shapes follow the tool exactly. See [[The Command Loop]] for each command and [[The Two Gates]] for the approvals.
 
@@ -76,11 +83,14 @@ sequenceDiagram
 
 ## Three things to remember mid-run
 
-**Resume is just re-running.** There is no daemon and no hidden state. A killed `execute` re-run picks up exactly the pairs that never finished. See [[The Command Loop]].
+> [!tip] Resume is just re-running
+> There is no daemon and no hidden state. A killed `execute` re-run picks up exactly the pairs that never finished. See [[The Command Loop]].
 
-**Blocked is not a failure.** Exit code 3 means an agent held work for your clearance. Read the area's report, resolve the blocker (often a missing file the executor could not see), and re-run `execute`. Only pairs without a parseable report re-launch. The `relay-mesh-readouts` skill in [[The Skill Pack]] covers clearing a blocked outcome.
+> [!warning] Blocked is not a failure
+> Exit code 3 means an agent held work for your clearance. Read the area's report, resolve the blocker (often a missing file the executor could not see), and re-run `execute`. Only pairs without a parseable report re-launch. The `relay-mesh-readouts` skill in [[The Skill Pack]] covers clearing a blocked outcome.
 
-**Artifacts are quarantined.** Executors write proposed files to `rounds/rNNN/workspace/<area>/files/`, never to your live repo. You adopt the work deliberately:
+> [!caution] Artifacts are quarantined
+> Executors write proposed files to `rounds/rNNN/workspace/<area>/files/`, never to your live repo. You adopt the work deliberately:
 
 ```bash
 git diff --no-index ../storefront/src relay/rounds/r001/workspace/backend/files/src

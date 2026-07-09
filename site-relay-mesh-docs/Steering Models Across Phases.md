@@ -1,19 +1,27 @@
+---
+title: Steering Models Across Phases
+description: Where Sonnet 5, Opus 4.8, and Fable 5 fit across the two brains.
+tags: [relay-mesh, models]
+publish: true
+---
+
 # Steering Models Across Phases
 
-Back to [[Relay Mesh Reference]].
+> [!info] Back to [[Relay Mesh Reference]]
 
 This is the note the whole vault builds toward. It answers one question: where do Sonnet 5, Opus 4.8, and Fable 5 fit in a relay-mesh run, and how do the skills help you steer them.
 
 ## The honest starting point
 
-Neither relay-mesh nor the skill pack hard-wires any Claude model to any phase. The skills are worker-neutral and name no model at all. The engine resolves worker models only from `.env`, by slot name. So the mapping below is operator guidance, not tool behavior. It is a recommended default you can adopt and then tune. What the tool guarantees is that the choice is always yours, at two seams.
+> [!note] Operator guidance, not tool behavior
+> Neither relay-mesh nor the skill pack hard-wires any Claude model to any phase. The skills are worker-neutral and name no model at all. The engine resolves worker models only from `.env`, by slot name. So the mapping below is operator guidance, not tool behavior. It is a recommended default you can adopt and then tune. What the tool guarantees is that the choice is always yours, at two seams.
 
 The two seams line up with the two brains from [[What Is Relay Mesh]]:
 
 - **Layer 1, the advisor session.** Which Claude model runs your Claude Code session while it drives a given phase.
 - **Layer 2, the worker slots.** Which model each `.env` slot resolves to for the fleet the run fans out to.
 
-## Layer 1 . The advisor session model
+## Layer 1 — The advisor session model
 
 The advisor is the brain reading recon output, drafting the plan and roster, judging the verdict, and clearing blockers. Match the model to the cognitive weight of the phase. This is guidance, not a rule.
 
@@ -33,9 +41,10 @@ flowchart LR
     F -.->|routine to deep| O
 ```
 
-A practical pattern: run the session on Sonnet 5 by default, switch up to Opus 4.8 at gate 1 and gate 2 for a large or ambiguous goal, and drop to Fable 5 in a second terminal that only runs `watch` and `status`.
+> [!tip] A practical pattern
+> Run the session on Sonnet 5 by default, switch up to Opus 4.8 at gate 1 and gate 2 for a large or ambiguous goal, and drop to Fable 5 in a second terminal that only runs `watch` and `status`.
 
-## Layer 2 . The worker slots
+## Layer 2 — The worker slots
 
 The worker fleet's models come from seven `.env` slots, assigned per domain in `roster.json` and per profile in `profiles.json`. The `relay-mesh-roster` skill helps you assign a slot to each domain, but you set what each slot resolves to. The stock defaults are open-weight models. OpenRouter also serves Anthropic models, so a slot can be pointed at a Claude model when you want a Claude worker. See [[Reference Cheatsheet]] for the full slot table and defaults.
 
@@ -53,16 +62,16 @@ The tiering logic mirrors Layer 1. Put your deepest model where a wrong judgemen
 
 ```mermaid
 flowchart TD
-    subgraph DEEP["Deep tier . Opus class"]
+    subgraph DEEP["Deep tier — Opus class"]
         PL["PLANNER_MODEL<br/>planner + verifier"]
     end
-    subgraph BAL["Balanced tier . Sonnet class"]
+    subgraph BAL["Balanced tier — Sonnet class"]
         RC["RECON_CODE_MODEL"]
         BE["BACKEND_MODEL"]
         FE["FRONTEND_MODEL"]
         IN["INFRA_MODEL"]
     end
-    subgraph FAST["Fast tier . Fable class"]
+    subgraph FAST["Fast tier — Fable class"]
         MO["MONITOR_MODEL"]
     end
     VI["VISION_MODEL<br/>multimodal, matched to attachments"]

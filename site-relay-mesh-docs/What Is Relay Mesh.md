@@ -1,13 +1,19 @@
+---
+title: What Is Relay Mesh
+description: The one-page mental model and the two-brain split.
+tags: [relay-mesh, concepts]
+publish: true
+---
+
 # What Is Relay Mesh
 
-Back to [[Relay Mesh Reference]].
+> [!info] Back to [[Relay Mesh Reference]]
 
 relay-mesh is a parallel-workstream orchestrator for open-weight models. You give it a goal, optionally with a whiteboard photo, a diagram, or a video. It fans out four recon agents, synthesizes a plan, and stops for your approval. You then approve a roster (how many executors run, in which domains), and it runs those executors in parallel while a junior monitor watches the relay directories. A verifier checks the outcome against your goal, and if it falls short it scaffolds a fix round, back through the same two human gates.
 
-Two properties define the tool:
-
-1. **The filesystem is the entire state.** There is no daemon and no database. Every command derives its phase from disk. Kill any command at any moment, re-run it, and it resumes exactly where it left off.
-2. **Worker inference is OpenRouter only.** Every worker agent is a model called through OpenRouter, paid from the operator's local `.env`. The advisor never substitutes itself for a worker.
+> [!abstract] Two properties define the tool
+> 1. **The filesystem is the entire state.** There is no daemon and no database. Every command derives its phase from disk. Kill any command at any moment, re-run it, and it resumes exactly where it left off.
+> 2. **Worker inference is OpenRouter only.** Every worker agent is a model called through OpenRouter, paid from the operator's local `.env`. The advisor never substitutes itself for a worker.
 
 ## The two brains
 
@@ -15,10 +21,10 @@ This is the frame that makes the model question make sense. relay-mesh runs on t
 
 ```mermaid
 flowchart LR
-    subgraph L1["Layer 1 . Advisor brain"]
+    subgraph L1["Layer 1 — Advisor brain"]
         A["Claude Code session<br/>running the skill pack"]
     end
-    subgraph L2["Layer 2 . Worker fleet"]
+    subgraph L2["Layer 2 — Worker fleet"]
         W1["recon agents"]
         W2["executor agents"]
         W3["monitor + verifier"]

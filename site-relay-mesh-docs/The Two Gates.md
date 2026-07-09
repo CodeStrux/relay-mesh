@@ -1,6 +1,13 @@
+---
+title: The Two Gates
+description: Why nothing runs without a human keystroke, twice.
+tags: [relay-mesh, safety]
+publish: true
+---
+
 # The Two Gates
 
-Back to [[Relay Mesh Reference]].
+> [!info] Back to [[Relay Mesh Reference]]
 
 Nothing executes without you, twice. The two gates are the spine of the tool's safety model, and they are also where the model choice stays in human hands. See [[Steering Models Across Phases]] for the model side.
 
@@ -44,7 +51,8 @@ sequenceDiagram
 
 ## The iron rule
 
-Both gates belong to the human, and so does the model choice. The advisor may author exactly two files, each before its gate: `rounds/rNNN/plan.md` and `rounds/rNNN/roster.json`. It never passes `--yes` unless you told it to approve, never writes an approval file, and never sets a concrete model id. It names model slots only, and models resolve from `.env`.
+> [!important]
+> Both gates belong to the human, and so does the model choice. The advisor may author exactly two files, each before its gate: `rounds/rNNN/plan.md` and `rounds/rNNN/roster.json`. It never passes `--yes` unless you told it to approve, never writes an approval file, and never sets a concrete model id. It names model slots only, and models resolve from `.env`.
 
 `execute` re-hashes both `plan.md` and `roster.json` and refuses on any mismatch (exit 1). No LLM runs between either approval and execution. The advisor can propose a plan and a roster, but it can never approve them or change a model.
 

@@ -1,6 +1,13 @@
+---
+title: The Skill Pack
+description: The four skills and which phase each one steers.
+tags: [relay-mesh, skills]
+publish: true
+---
+
 # The Skill Pack
 
-Back to [[Relay Mesh Reference]].
+> [!info] Back to [[Relay Mesh Reference]]
 
 `relay-mesh-agent-skills` is an open-source, agent-agnostic skill pack that teaches any interactive coding agent (Claude Code, codex, hermes, opencode) to operate relay-mesh as an advisor and operator. It never performs worker inference itself. That is always OpenRouter, from the operator's `.env`. The skills deliberately name no model anywhere. They steer phases and slot names, not model ids. That worker-neutral design is exactly why the model mapping is operator guidance, covered in [[Steering Models Across Phases]].
 
@@ -56,4 +63,5 @@ Re-run `install.sh` after skills are added, renamed, or removed. It prunes dangl
 
 ## The boundary the skills defend
 
-Every skill enforces the same contract. The advisor authors `plan.md` and `roster.json` and nothing else that the engine owns. It never writes `*.approval.json`, a report, a closure, the workspace, the monitor files, or the usage ledger. See [[The Two Gates]] for why, and [[Core Concepts]] for what each of those files is.
+> [!important]
+> Every skill enforces the same contract. The advisor authors `plan.md` and `roster.json` and nothing else that the engine owns. It never writes `*.approval.json`, a report, a closure, the workspace, the monitor files, or the usage ledger. See [[The Two Gates]] for why, and [[Core Concepts]] for what each of those files is.

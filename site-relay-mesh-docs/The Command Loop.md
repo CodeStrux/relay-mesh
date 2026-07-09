@@ -1,6 +1,13 @@
+---
+title: The Command Loop
+description: Every command, the phase machine, and the exit codes.
+tags: [relay-mesh, cli, reference]
+publish: true
+---
+
 # The Command Loop
 
-Back to [[Relay Mesh Reference]].
+> [!info] Back to [[Relay Mesh Reference]]
 
 The operator loop is short and always the same. Run `doctor` first on any new box, then walk the phases. A bare re-run resumes from on-disk state, so there is no separate resume command.
 
@@ -68,4 +75,5 @@ Read these, do not parse prose. They are uniform across every command.
 | 2 | awaiting a human, a gate is pending or partial work remains | surface it to the user, do not force |
 | 3 | blocked outcomes present | first-class, not a failure. Read the blocked report, clear it, re-run `execute`. See [[The Skill Pack]] for the readouts skill that handles this. |
 
-Blocked is the one people misread. Exit code 3 means an agent held work for your clearance. Only pairs without a parseable report re-launch when you re-run, so clearing a blocker and re-running is safe and cheap.
+> [!warning] Blocked is not a failure
+> Blocked is the one people misread. Exit code 3 means an agent held work for your clearance. Only pairs without a parseable report re-launch when you re-run, so clearing a blocker and re-running is safe and cheap.

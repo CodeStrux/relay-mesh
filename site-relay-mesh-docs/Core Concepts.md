@@ -1,6 +1,13 @@
+---
+title: Core Concepts
+description: Profile, relay pair, roster, brief, report, closure, round, blocked.
+tags: [relay-mesh, concepts, glossary]
+publish: true
+---
+
 # Core Concepts
 
-Back to [[Relay Mesh Reference]].
+> [!info] Back to [[Relay Mesh Reference]]
 
 The vocabulary you need before reading [[The Command Loop]] and [[The Two Gates]]. Every term here maps to something concrete on disk.
 
@@ -44,7 +51,8 @@ flowchart TD
     RN --> STAGEUSAGE["usage/stage.json"]
 ```
 
-Every write goes to a `.part` file first, then an atomic rename, so a visible file is always complete. Readers ignore `*.part` and dot-prefixed entries. This is what makes a shared root safe across machines with no locks. See [[Reference Cheatsheet]] for the single-writer table and the multi-machine split.
+> [!note]
+> Every write goes to a `.part` file first, then an atomic rename, so a visible file is always complete. Readers ignore `*.part` and dot-prefixed entries. This is what makes a shared root safe across machines with no locks. See [[Reference Cheatsheet]] for the single-writer table and the multi-machine split.
 
 ## The status block
 
